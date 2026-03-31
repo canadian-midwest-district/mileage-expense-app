@@ -377,8 +377,17 @@
     <div class="card">
         <div class="card-title">Claim Details</div>
         <div class="field">
-            <label>Committee / Purpose</label>
-            <input type="text" id="purpose" placeholder="e.g., District Conference, Church Visit">
+            <label>Claim Category</label>
+            <select id="claimCategory">
+                <option value="Employee Mileage">Employee Mileage</option>
+                <option value="DEXCOM">DEXCOM</option>
+                <option value="Licensing Committee">Licensing Committee</option>
+                <option value="Ordaining Council">Ordaining Council</option>
+            </select>
+        </div>
+        <div class="field">
+            <label>Purpose / Details</label>
+            <input type="text" id="purpose" placeholder="e.g., Church visit, committee meeting">
         </div>
         <div class="field">
             <label>Date</label>
@@ -430,7 +439,7 @@
 <div id="successScreen" class="success-screen">
     <div class="checkmark">&#10003;</div>
     <h2>Claim Submitted</h2>
-    <p>Your mileage claim has been submitted successfully. Emmanuel will be notified.</p>
+    <p>Your claim has been submitted and sent for approval. You'll be notified once it's reviewed.</p>
     <button class="btn btn-primary" onclick="resetForm()">Submit Another</button>
 </div>
 
@@ -588,26 +597,38 @@
 
     // ========== SUBMIT ==========
     async function submitClaim() {
+        const claimCategory = document.getElementById('claimCategory').value;
         const purpose = document.getElementById('purpose').value.trim();
         const claimDate = document.getElementById('claimDate').value;
         const notes = document.getElementById('notes').value.trim();
 
-        if (!purpose) { showToast('Please enter the committee/purpose.'); return; }
+        if (!purpose) { showToast('Please enter the purpose / details.'); return; }
         if (!claimDate) { showToast('Please select a date.'); return; }
 
         const days = document.querySelectorAll('.travel-day');
         if (days.length === 0) { showToast('Please add at least one travel day.'); return; }
 
-        // Calculate totals
+        // Calculate totals and build per-day breakdown for auditors
         let totalKm = 0;
         let totalExpenses = 0;
-        days.forEach(day => {
+        const breakdownLines = [];
+
+        days.forEach((day, index) => {
             const inputs = day.querySelectorAll('input[type="number"]');
             const km065 = parseFloat(inputs[0].value) || 0;
             const km020 = parseFloat(inputs[1].value) || 0;
+            const dayTotal = (km065 * CONFIG.rate065) + (km020 * CONFIG.rate020);
             totalKm += km065 + km020;
-            totalExpenses += (km065 * CONFIG.rate065) + (km020 * CONFIG.rate020);
+            totalExpenses += dayTotal;
+            breakdownLines.push(
+                `Day ${index + 1}: ${km065} km @ $${CONFIG.rate065.toFixed(2)} = $${(km065 * CONFIG.rate065).toFixed(2)}` +
+                ` | ${km020} km @ $${CONFIG.rate020.toFixed(2)} = $${(km020 * CONFIG.rate020).toFixed(2)}` +
+                ` | Day total: $${dayTotal.toFixed(2)}`
+            );
         });
+
+        breakdownLines.push(`TOTAL: ${totalKm.toFixed(1)} km | $${totalExpenses.toFixed(2)}`);
+        const mileageBreakdown = breakdownLines.join('\n');
 
         if (totalKm === 0) { showToast('Please enter some kilometres.'); return; }
 
@@ -644,7 +665,9 @@
                     Title: `${currentUser.name} - ${claimDate}`,
                     EmployeeName: currentUser.name || currentUser.username,
                     SubmissionDate: claimDate,
+                    ClaimCategory: claimCategory,
                     CommitteePurpose: purpose,
+                    MileageBreakdown: mileageBreakdown,
                     TotalMileage: totalKm,
                     TotalExpenses: totalExpenses,
                     GrandTotal: totalExpenses,
@@ -684,6 +707,7 @@
 
     // ========== HELPERS ==========
     function resetForm() {
+        document.getElementById('claimCategory').selectedIndex = 0;
         document.getElementById('purpose').value = '';
         document.getElementById('claimDate').valueAsDate = new Date();
         document.getElementById('notes').value = '';
