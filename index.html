@@ -197,16 +197,11 @@
             line-height: 1;
         }
 
-        .km-row {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 10px;
-        }
-
-        .km-row .field { flex: 1; margin-bottom: 0; }
-
-        .km-row .field label {
+        .day-rate-split {
             font-size: 12px;
+            color: var(--text-light);
+            margin: 4px 0 8px;
+            min-height: 16px;
         }
 
         .day-total {
@@ -217,6 +212,63 @@
             margin-top: 8px;
             padding-top: 8px;
             border-top: 1px solid var(--border);
+        }
+
+        .expense-item {
+            background: #f9f9fb;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .expense-item .expense-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .expense-item .expense-label {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--primary);
+        }
+
+        .expense-item .remove-expense {
+            background: none;
+            border: none;
+            color: var(--danger);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px 8px;
+            line-height: 1;
+        }
+
+        .expense-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .expense-row .field { flex: 1; margin-bottom: 0; }
+        .expense-row .field.amount { flex: 0 0 110px; }
+
+        .receipt-label {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-top: 10px;
+            display: block;
+        }
+
+        .receipt-input {
+            width: 100%;
+            padding: 8px;
+            font-size: 13px;
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+            background: white;
+            margin-top: 4px;
+            color: var(--text);
         }
 
         .totals-grid {
@@ -326,7 +378,8 @@
         }
 
         @media (max-width: 380px) {
-            .km-row { flex-direction: column; gap: 8px; }
+            .expense-row { flex-direction: column; gap: 8px; }
+            .expense-row .field.amount { flex: 1; }
             .totals-grid { grid-template-columns: 1fr; }
             .total-box.grand { grid-column: 1; }
         }
@@ -349,6 +402,7 @@
         // Mileage rates
         rate065: 0.65,
         rate020: 0.20,
+        dailyHighRateLimit: 200,  // km/day at the higher rate before dropping to lower rate
     };
 </script>
 
@@ -402,6 +456,13 @@
         <button class="btn btn-outline" onclick="addDay()" style="margin-top: 8px;">+ Add Travel Day</button>
     </div>
 
+    <!-- Additional Expenses -->
+    <div class="card">
+        <div class="card-title">Additional Expenses</div>
+        <div id="expenseItems"></div>
+        <button class="btn btn-outline" onclick="addExpense()" style="margin-top: 8px;">+ Add Expense</button>
+    </div>
+
     <!-- Totals -->
     <div class="card">
         <div class="card-title">Totals</div>
@@ -413,6 +474,10 @@
             <div class="total-box">
                 <div class="total-label">Mileage $</div>
                 <div class="total-value" id="totalMileage">$0.00</div>
+            </div>
+            <div class="total-box">
+                <div class="total-label">Expenses $</div>
+                <div class="total-value" id="totalExpensesDisplay">$0.00</div>
             </div>
             <div class="total-box grand">
                 <div class="total-label">Grand Total</div>
@@ -539,18 +604,12 @@
                 <span class="day-label">Day ${dayCount}</span>
                 <button class="remove-day" onclick="removeDay('day-${dayCount}')" title="Remove day">&times;</button>
             </div>
-            <div class="km-row">
-                <div class="field">
-                    <label>Km @ $${CONFIG.rate065.toFixed(2)}</label>
-                    <input type="number" inputmode="decimal" min="0" step="0.1" value="0"
-                           onchange="recalc()" oninput="recalc()" placeholder="0">
-                </div>
-                <div class="field">
-                    <label>Km @ $${CONFIG.rate020.toFixed(2)}</label>
-                    <input type="number" inputmode="decimal" min="0" step="0.1" value="0"
-                           onchange="recalc()" oninput="recalc()" placeholder="0">
-                </div>
+            <div class="field" style="margin-bottom:4px;">
+                <label>Total Km</label>
+                <input type="number" inputmode="decimal" min="0" step="0.1" value="0"
+                       onchange="recalc()" oninput="recalc()" placeholder="0">
             </div>
+            <div class="day-rate-split"></div>
             <div class="day-total">Day total: $0.00</div>
         `;
         document.getElementById('travelDays').appendChild(dayDiv);
@@ -574,25 +633,82 @@
         dayCount = days.length;
     }
 
+    // ========== ADDITIONAL EXPENSES ==========
+    let expenseCount = 0;
+
+    function addExpense() {
+        expenseCount++;
+        const div = document.createElement('div');
+        div.className = 'expense-item';
+        div.id = `expense-${expenseCount}`;
+        div.innerHTML = `
+            <div class="expense-header">
+                <span class="expense-label">Expense ${expenseCount}</span>
+                <button class="remove-expense" onclick="removeExpense('expense-${expenseCount}')" title="Remove">&times;</button>
+            </div>
+            <div class="expense-row">
+                <div class="field">
+                    <label>Description</label>
+                    <input type="text" placeholder="e.g., Lunch, Parking" style="font-size:15px;">
+                </div>
+                <div class="field amount">
+                    <label>Amount ($)</label>
+                    <input type="number" class="expense-amount-input" inputmode="decimal"
+                           min="0" step="0.01" value="" placeholder="0.00"
+                           onchange="recalc()" oninput="recalc()">
+                </div>
+            </div>
+            <label class="receipt-label">Receipt (photo or PDF)</label>
+            <input type="file" class="receipt-input" accept="image/*,application/pdf">
+        `;
+        document.getElementById('expenseItems').appendChild(div);
+        recalc();
+    }
+
+    function removeExpense(id) {
+        const el = document.getElementById(id);
+        if (el) { el.remove(); recalc(); }
+    }
+
     function recalc() {
         const days = document.querySelectorAll('.travel-day');
         let totalKm = 0;
-        let totalDollars = 0;
+        let totalMileageDollars = 0;
 
         days.forEach(day => {
-            const inputs = day.querySelectorAll('input[type="number"]');
-            const km065 = parseFloat(inputs[0].value) || 0;
-            const km020 = parseFloat(inputs[1].value) || 0;
+            const input = day.querySelector('input[type="number"]');
+            const km = parseFloat(input.value) || 0;
+            const km065 = Math.min(km, CONFIG.dailyHighRateLimit);
+            const km020 = Math.max(0, km - CONFIG.dailyHighRateLimit);
             const dayTotal = (km065 * CONFIG.rate065) + (km020 * CONFIG.rate020);
 
+            // Show rate split breakdown under the input
+            const splitEl = day.querySelector('.day-rate-split');
+            if (km > 0 && km020 > 0) {
+                splitEl.textContent = `${km065} km @ $${CONFIG.rate065.toFixed(2)} + ${km020} km @ $${CONFIG.rate020.toFixed(2)}`;
+            } else if (km > 0) {
+                splitEl.textContent = `${km065} km @ $${CONFIG.rate065.toFixed(2)}`;
+            } else {
+                splitEl.textContent = '';
+            }
+
             day.querySelector('.day-total').textContent = `Day total: $${dayTotal.toFixed(2)}`;
-            totalKm += km065 + km020;
-            totalDollars += dayTotal;
+            totalKm += km;
+            totalMileageDollars += dayTotal;
         });
 
+        // Expenses total
+        let totalExpensesDollars = 0;
+        document.querySelectorAll('.expense-amount-input').forEach(input => {
+            totalExpensesDollars += parseFloat(input.value) || 0;
+        });
+
+        const grandTotal = totalMileageDollars + totalExpensesDollars;
+
         document.getElementById('totalKm').textContent = totalKm.toFixed(1);
-        document.getElementById('totalMileage').textContent = `$${totalDollars.toFixed(2)}`;
-        document.getElementById('grandTotal').textContent = `$${totalDollars.toFixed(2)}`;
+        document.getElementById('totalMileage').textContent = `$${totalMileageDollars.toFixed(2)}`;
+        document.getElementById('totalExpensesDisplay').textContent = `$${totalExpensesDollars.toFixed(2)}`;
+        document.getElementById('grandTotal').textContent = `$${grandTotal.toFixed(2)}`;
     }
 
     // ========== SUBMIT ==========
@@ -608,29 +724,45 @@
         const days = document.querySelectorAll('.travel-day');
         if (days.length === 0) { showToast('Please add at least one travel day.'); return; }
 
-        // Calculate totals and build per-day breakdown for auditors
+        // Build mileage breakdown with auto-split at daily limit
         let totalKm = 0;
-        let totalExpenses = 0;
+        let totalMileageDollars = 0;
         const breakdownLines = [];
 
         days.forEach((day, index) => {
-            const inputs = day.querySelectorAll('input[type="number"]');
-            const km065 = parseFloat(inputs[0].value) || 0;
-            const km020 = parseFloat(inputs[1].value) || 0;
+            const input = day.querySelector('input[type="number"]');
+            const km = parseFloat(input.value) || 0;
+            const km065 = Math.min(km, CONFIG.dailyHighRateLimit);
+            const km020 = Math.max(0, km - CONFIG.dailyHighRateLimit);
             const dayTotal = (km065 * CONFIG.rate065) + (km020 * CONFIG.rate020);
-            totalKm += km065 + km020;
-            totalExpenses += dayTotal;
-            breakdownLines.push(
-                `Day ${index + 1}: ${km065} km @ $${CONFIG.rate065.toFixed(2)} = $${(km065 * CONFIG.rate065).toFixed(2)}` +
-                ` | ${km020} km @ $${CONFIG.rate020.toFixed(2)} = $${(km020 * CONFIG.rate020).toFixed(2)}` +
-                ` | Day total: $${dayTotal.toFixed(2)}`
-            );
+            totalKm += km;
+            totalMileageDollars += dayTotal;
+            let line = `Day ${index + 1}: ${km065} km @ $${CONFIG.rate065.toFixed(2)} = $${(km065 * CONFIG.rate065).toFixed(2)}`;
+            if (km020 > 0) line += ` | ${km020} km @ $${CONFIG.rate020.toFixed(2)} = $${(km020 * CONFIG.rate020).toFixed(2)}`;
+            line += ` | Day total: $${dayTotal.toFixed(2)}`;
+            breakdownLines.push(line);
         });
-
-        breakdownLines.push(`TOTAL: ${totalKm.toFixed(1)} km | $${totalExpenses.toFixed(2)}`);
+        breakdownLines.push(`TOTAL: ${totalKm.toFixed(1)} km | $${totalMileageDollars.toFixed(2)}`);
         const mileageBreakdown = breakdownLines.join('\n');
 
         if (totalKm === 0) { showToast('Please enter some kilometres.'); return; }
+
+        // Collect additional expenses
+        const expenseItems = document.querySelectorAll('.expense-item');
+        let totalExpenseDollars = 0;
+        const expenseData = [];
+        expenseItems.forEach(item => {
+            const desc = item.querySelector('input[type="text"]').value.trim();
+            const amount = parseFloat(item.querySelector('.expense-amount-input').value) || 0;
+            const fileInput = item.querySelector('input[type="file"]');
+            const file = fileInput.files[0] || null;
+            if (desc || amount > 0) {
+                expenseData.push({ desc, amount, file });
+                totalExpenseDollars += amount;
+            }
+        });
+
+        const grandTotal = totalMileageDollars + totalExpenseDollars;
 
         const btn = document.getElementById('submitBtn');
         btn.disabled = true;
@@ -659,6 +791,36 @@
             const lists = await listRes.json();
             const listId = lists.value[0].id;
 
+            // Upload receipts to SharePoint document library, build expense details text
+            const safeEmployee = (currentUser.name || currentUser.username).replace(/[^a-zA-Z0-9 _-]/g, '');
+            const expenseLines = [];
+            for (const expense of expenseData) {
+                let receiptUrl = 'no receipt';
+                if (expense.file) {
+                    const filename = `${Date.now()}-${expense.file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+                    const uploadPath = `Travel Receipts/${claimDate}/${safeEmployee}/${filename}`;
+                    const uploadRes = await fetch(
+                        `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/root:/${uploadPath}:/content`,
+                        {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${accessToken}`,
+                                'Content-Type': expense.file.type || 'application/octet-stream'
+                            },
+                            body: expense.file
+                        }
+                    );
+                    if (uploadRes.ok) {
+                        const uploaded = await uploadRes.json();
+                        receiptUrl = uploaded.webUrl || 'uploaded';
+                    }
+                }
+                expenseLines.push(`${expense.desc || '(no description)'}: $${expense.amount.toFixed(2)} | Receipt: ${receiptUrl}`);
+            }
+            const expenseDetails = expenseLines.length > 0
+                ? expenseLines.join('\n') + `\nTOTAL EXPENSES: $${totalExpenseDollars.toFixed(2)}`
+                : '';
+
             // Create list item
             const item = {
                 fields: {
@@ -669,8 +831,10 @@
                     CommitteePurpose: purpose,
                     MileageBreakdown: mileageBreakdown,
                     TotalMileage: totalKm,
-                    TotalExpenses: totalExpenses,
-                    GrandTotal: totalExpenses,
+                    TotalExpenses: totalMileageDollars,
+                    ExpenseDetails: expenseDetails,
+                    ExpenseTotal: totalExpenseDollars,
+                    GrandTotal: grandTotal,
                     Notes: notes || ''
                 }
             };
@@ -712,7 +876,9 @@
         document.getElementById('claimDate').valueAsDate = new Date();
         document.getElementById('notes').value = '';
         document.getElementById('travelDays').innerHTML = '';
+        document.getElementById('expenseItems').innerHTML = '';
         dayCount = 0;
+        expenseCount = 0;
         addDay();
         recalc();
 
