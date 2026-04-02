@@ -428,6 +428,168 @@
             margin-top: 14px;
         }
 
+        /* ========== VEHICLE SELECTION SCREEN ========== */
+        .vehicle-select-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .vehicle-select-screen h2 {
+            font-size: 22px;
+            margin-bottom: 8px;
+        }
+
+        .vehicle-select-screen p {
+            color: var(--text-light);
+            margin-bottom: 28px;
+            font-size: 14px;
+        }
+
+        .vehicle-choice-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            width: 100%;
+            max-width: 320px;
+        }
+
+        .btn-vehicle-choice {
+            background: var(--card);
+            border: 2px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            text-align: left;
+            width: 100%;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+            font-family: inherit;
+        }
+
+        .btn-vehicle-choice:hover {
+            border-color: var(--primary);
+            background: rgba(0,120,212,0.04);
+        }
+
+        .btn-vehicle-choice .choice-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .btn-vehicle-choice .choice-desc {
+            font-size: 13px;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+
+        /* ========== DISTRICT VEHICLE FORM ========== */
+        .district-form {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+
+        .field-readonly {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 16px;
+            background: #f3f3f3;
+            color: var(--text-light);
+        }
+
+        .odometer-hint {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-top: 5px;
+        }
+
+        /* ========== CHURCH PICKER ========== */
+        .church-picker-wrapper { position: relative; }
+
+        .church-search-input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 16px;
+            font-family: inherit;
+            color: var(--text);
+            background: #fafafa;
+            -webkit-appearance: none;
+            margin-bottom: 6px;
+        }
+
+        .church-search-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(0,120,212,0.15);
+            background: white;
+        }
+
+        .church-list {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+            background: white;
+        }
+
+        .church-list-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            cursor: pointer;
+            font-size: 15px;
+            color: var(--text);
+        }
+
+        .church-list-item:hover { background: #f0f6ff; }
+        .church-list-item.selected { background: rgba(0,120,212,0.08); }
+
+        .church-list-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--primary);
+            flex-shrink: 0;
+            cursor: pointer;
+        }
+
+        .church-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .church-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #e3f0fd;
+            color: var(--primary);
+            border-radius: 20px;
+            padding: 4px 10px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .church-tag .remove-tag {
+            background: none;
+            border: none;
+            color: var(--primary);
+            font-size: 16px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+
         @media (max-width: 380px) {
             .expense-row { flex-direction: column; gap: 8px; }
             .expense-row .field.amount { flex: 1; }
@@ -450,12 +612,20 @@
         siteHost: 'cmacmd.sharepoint.com',
         sitePath: '/sites/CanadianMidwestDistrictofTheChristianandMissionaryAlliancein',
         listName: 'Travel Expense Claims',
+        districtVehicleLogsList: 'District Vehicle Logs',
+        masterChurchList: 'Master Church List',
 
         // Mileage rates
         rate065: 0.65,
         rate020: 0.20,
         dailyHighRateLimit: 200,  // km/day at the higher rate before dropping to lower rate
     };
+
+    const DISTRICT_VEHICLES = [
+        { nickname: 'White Lightning', details: '2024 Toyota Camry – SK 913 NFQ' },
+        { nickname: 'Silver Bullet',   details: '2021 Toyota Camry – SK 014 LPY' },
+        // Third vehicle (2026 Toyota Corolla Cross) — add when delivered in May
+    ];
 </script>
 
 <div class="header">
@@ -471,6 +641,22 @@
     <h2>Sign In</h2>
     <p>Use your Microsoft 365 account to submit expense claims.</p>
     <button class="btn btn-primary" onclick="signIn()">Sign in with Microsoft</button>
+</div>
+
+<!-- Vehicle Selection Screen -->
+<div id="vehicleSelectScreen" style="display:none;" class="vehicle-select-screen">
+    <h2>Which vehicle are you using?</h2>
+    <p>Select the vehicle for this trip.</p>
+    <div class="vehicle-choice-buttons">
+        <button class="btn-vehicle-choice" onclick="choosePersonalVehicle()">
+            <div class="choice-title">Personal Vehicle</div>
+            <div class="choice-desc">Submit a mileage &amp; expense claim</div>
+        </button>
+        <button class="btn-vehicle-choice" onclick="chooseDistrictVehicle()">
+            <div class="choice-title">District Vehicle</div>
+            <div class="choice-desc">Log a trip in a district-owned vehicle</div>
+        </button>
+    </div>
 </div>
 
 <!-- User Bar -->
@@ -576,12 +762,76 @@
     </button>
 </div>
 
+<!-- District Vehicle Form -->
+<div id="districtForm" class="district-form" style="display:none;">
+
+    <div class="card">
+        <div class="card-title">District Vehicle Trip Log</div>
+
+        <div class="field">
+            <label>Vehicle</label>
+            <select id="distVehicle" onchange="onDistrictVehicleChange()">
+                <option value="">— Select a vehicle —</option>
+            </select>
+        </div>
+
+        <div class="field">
+            <label>Driver</label>
+            <div class="field-readonly" id="distDriver"></div>
+        </div>
+
+        <div class="field">
+            <label>Date</label>
+            <input type="date" id="distDate">
+        </div>
+
+        <div class="field">
+            <label>Odometer Reading (end of trip, km)</label>
+            <input type="number" id="distOdometer" inputmode="decimal"
+                   min="0" step="1" placeholder="e.g. 45230"
+                   oninput="updateKmDriven()">
+            <div class="odometer-hint" id="distOdometerHint">Select a vehicle to see the previous reading.</div>
+        </div>
+
+        <div class="field" style="margin-bottom:0;">
+            <label>Km Driven (calculated)</label>
+            <div class="field-readonly" id="distKmDriven">—</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Churches Visited</div>
+        <div class="church-picker-wrapper">
+            <input type="text" class="church-search-input" id="churchSearch"
+                   placeholder="Search churches…" oninput="filterChurches()">
+            <div class="church-list" id="churchList">
+                <div style="padding:12px; color:var(--text-light); font-size:14px;">Loading churches…</div>
+            </div>
+        </div>
+        <div class="church-tags" id="churchTags"></div>
+    </div>
+
+    <div class="card">
+        <div class="field" style="margin-bottom:0;">
+            <label>Purpose / Notes</label>
+            <textarea id="distPurpose" placeholder="Describe the purpose of this trip…"></textarea>
+        </div>
+    </div>
+
+    <button class="btn btn-success" id="distSubmitBtn" onclick="submitDistrictLog()">
+        Submit Trip Log
+    </button>
+
+    <div style="height: 24px;"></div>
+</div>
+
 <!-- Success Screen -->
 <div id="successScreen" class="success-screen">
     <div class="checkmark">&#10003;</div>
-    <h2>Claim Submitted</h2>
-    <p>Your claim has been submitted and sent for approval. You'll be notified once it's reviewed.</p>
-    <button class="btn btn-primary" onclick="resetForm()">Submit Another</button>
+    <h2 id="successHeading">Claim Submitted</h2>
+    <p id="successMessage">Your claim has been submitted and sent for approval. You'll be notified once it's reviewed.</p>
+    <span id="successFlowType" style="display:none;"></span>
+    <button class="btn btn-primary" id="successBackBtn" onclick="handleSuccessBack()">Submit Another</button>
 </div>
 
 <!-- Toast -->
@@ -609,6 +859,9 @@
 
     let currentUser = null;
     let accessToken = null;
+    let allChurches = [];
+    let selectedChurches = new Set();
+    let distPreviousOdometer = null;
 
     async function signIn() {
         try {
@@ -638,16 +891,8 @@
 
         document.getElementById('loginScreen').style.display = 'none';
         document.getElementById('userBar').style.display = 'flex';
-        document.getElementById('mainForm').style.display = 'block';
         document.getElementById('userName').textContent = currentUser.name || currentUser.username;
-
-        // Set default date to today
-        document.getElementById('claimDate').valueAsDate = new Date();
-
-        // Start with one travel day
-        if (document.querySelectorAll('.travel-day').length === 0) {
-            addDay();
-        }
+        document.getElementById('vehicleSelectScreen').style.display = 'flex';
     }
 
     function signOut() {
@@ -657,6 +902,12 @@
         document.getElementById('loginScreen').style.display = 'flex';
         document.getElementById('userBar').style.display = 'none';
         document.getElementById('mainForm').style.display = 'none';
+        document.getElementById('vehicleSelectScreen').style.display = 'none';
+        document.getElementById('districtForm').style.display = 'none';
+        document.getElementById('successScreen').style.display = 'none';
+        allChurches = [];
+        selectedChurches = new Set();
+        distPreviousOdometer = null;
     }
 
     // Check for existing session on load
@@ -664,6 +915,32 @@
         const accounts = msalInstance.getAllAccounts();
         if (accounts.length > 0) {
             await handleAuth(accounts[0]);
+        }
+    }
+
+    // ========== VEHICLE ROUTING ==========
+    function choosePersonalVehicle() {
+        document.getElementById('vehicleSelectScreen').style.display = 'none';
+        document.getElementById('mainForm').style.display = 'block';
+        document.getElementById('claimDate').valueAsDate = new Date();
+        if (document.querySelectorAll('.travel-day').length === 0) { addDay(); }
+    }
+
+    async function chooseDistrictVehicle() {
+        document.getElementById('vehicleSelectScreen').style.display = 'none';
+        document.getElementById('districtForm').style.display = 'block';
+        initDistrictForm();
+        await loadChurches();
+    }
+
+    function handleSuccessBack() {
+        const flow = document.getElementById('successFlowType').textContent;
+        document.getElementById('successScreen').style.display = 'none';
+        if (flow === 'district') {
+            resetDistrictForm();
+            document.getElementById('vehicleSelectScreen').style.display = 'flex';
+        } else {
+            resetForm();
         }
     }
 
@@ -794,7 +1071,7 @@
         document.getElementById('etransferEmail').required = isEtransfer;
     }
 
-    // ========== SUBMIT ==========
+    // ========== SUBMIT PERSONAL CLAIM ==========
     async function submitClaim() {
         const claimCategory = document.getElementById('claimCategory').value;
         const purpose = document.getElementById('purpose').value.trim();
@@ -966,6 +1243,10 @@
             }
 
             // Show success
+            document.getElementById('successFlowType').textContent = 'personal';
+            document.getElementById('successHeading').textContent = 'Claim Submitted';
+            document.getElementById('successMessage').textContent = "Your claim has been submitted and sent for approval. You'll be notified once it's reviewed.";
+            document.getElementById('successBackBtn').textContent = 'Submit Another Claim';
             document.getElementById('mainForm').style.display = 'none';
             document.getElementById('successScreen').style.display = 'flex';
 
@@ -975,6 +1256,268 @@
         } finally {
             btn.disabled = false;
             btn.innerHTML = 'Submit Claim';
+        }
+    }
+
+    // ========== DISTRICT VEHICLE FORM ==========
+    function initDistrictForm() {
+        const sel = document.getElementById('distVehicle');
+        sel.innerHTML = '<option value="">— Select a vehicle —</option>';
+        DISTRICT_VEHICLES.forEach((v, i) => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = v.nickname;
+            sel.appendChild(opt);
+        });
+
+        document.getElementById('distDriver').textContent = currentUser.name || currentUser.username;
+        document.getElementById('distDate').valueAsDate = new Date();
+        document.getElementById('distOdometer').value = '';
+        document.getElementById('distKmDriven').textContent = '—';
+        document.getElementById('distOdometerHint').textContent = 'Select a vehicle to see the previous reading.';
+        distPreviousOdometer = null;
+    }
+
+    async function onDistrictVehicleChange() {
+        const idx = document.getElementById('distVehicle').value;
+        const hint = document.getElementById('distOdometerHint');
+        document.getElementById('distKmDriven').textContent = '—';
+
+        if (idx === '') {
+            distPreviousOdometer = null;
+            hint.textContent = 'Select a vehicle to see the previous reading.';
+            return;
+        }
+
+        const vehicle = DISTRICT_VEHICLES[parseInt(idx)];
+        hint.textContent = 'Looking up last odometer reading…';
+
+        try {
+            const tokenResponse = await msalInstance.acquireTokenSilent({
+                scopes: loginRequest.scopes, account: currentUser });
+            accessToken = tokenResponse.accessToken;
+
+            const siteRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`,
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            const site = await siteRes.json();
+
+            const listRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${site.id}/lists?$filter=displayName eq '${CONFIG.districtVehicleLogsList}'`,
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            const lists = await listRes.json();
+            const logListId = lists.value[0].id;
+
+            const encodedName = encodeURIComponent(vehicle.nickname);
+            const itemsRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${logListId}/items` +
+                `?$expand=fields($select=VehicleName,OdometerReading,TripDate)` +
+                `&$filter=fields/VehicleName eq '${encodedName}'` +
+                `&$orderby=fields/TripDate desc&$top=1`,
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            const items = await itemsRes.json();
+
+            if (items.value && items.value.length > 0) {
+                distPreviousOdometer = items.value[0].fields.OdometerReading;
+                const lastDate = (items.value[0].fields.TripDate || '').split('T')[0] || 'unknown date';
+                hint.textContent = `Previous reading: ${distPreviousOdometer.toLocaleString()} km (as of ${lastDate})`;
+            } else {
+                distPreviousOdometer = null;
+                hint.textContent = 'No previous trips logged for this vehicle. Km driven will not be calculated.';
+            }
+            updateKmDriven();
+        } catch (err) {
+            distPreviousOdometer = null;
+            hint.textContent = 'Could not fetch previous odometer reading.';
+            console.error(err);
+        }
+    }
+
+    function updateKmDriven() {
+        const end = parseFloat(document.getElementById('distOdometer').value);
+        const display = document.getElementById('distKmDriven');
+        if (!isNaN(end) && distPreviousOdometer !== null) {
+            const km = end - distPreviousOdometer;
+            display.textContent = km >= 0 ? `${km.toLocaleString()} km` : 'Error: end reading is less than previous';
+        } else if (!isNaN(end) && distPreviousOdometer === null) {
+            display.textContent = 'No previous reading — cannot calculate';
+        } else {
+            display.textContent = '—';
+        }
+    }
+
+    // ========== CHURCH PICKER ==========
+    async function loadChurches() {
+        document.getElementById('churchList').innerHTML =
+            '<div style="padding:12px; color:var(--text-light); font-size:14px;">Loading churches…</div>';
+        try {
+            const tokenResponse = await msalInstance.acquireTokenSilent({
+                scopes: loginRequest.scopes, account: currentUser });
+            accessToken = tokenResponse.accessToken;
+
+            const siteRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`,
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            const site = await siteRes.json();
+
+            const listRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${site.id}/lists?$filter=displayName eq '${CONFIG.masterChurchList}'`,
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            const lists = await listRes.json();
+            const churchListId = lists.value[0].id;
+
+            let url = `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${churchListId}/items` +
+                      `?$expand=fields($select=Church)&$top=500`;
+            allChurches = [];
+            while (url) {
+                const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+                const data = await res.json();
+                data.value.forEach(item => {
+                    const name = item.fields?.Church;
+                    if (name) allChurches.push(name);
+                });
+                url = data['@odata.nextLink'] || null;
+            }
+            allChurches.sort();
+            renderChurchList(allChurches);
+        } catch (err) {
+            document.getElementById('churchList').innerHTML =
+                '<div style="padding:12px; color:var(--danger); font-size:14px;">Failed to load churches.</div>';
+            console.error(err);
+        }
+    }
+
+    function renderChurchList(churches) {
+        const list = document.getElementById('churchList');
+        if (churches.length === 0) {
+            list.innerHTML = '<div style="padding:12px; color:var(--text-light); font-size:14px;">No churches found.</div>';
+            return;
+        }
+        list.innerHTML = '';
+        churches.forEach(name => {
+            const item = document.createElement('div');
+            const isSelected = selectedChurches.has(name);
+            item.className = 'church-list-item' + (isSelected ? ' selected' : '');
+            const safeName = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            item.innerHTML = `
+                <input type="checkbox" ${isSelected ? 'checked' : ''}
+                       onchange="toggleChurch('${safeName}', this.checked)">
+                <span>${name}</span>`;
+            list.appendChild(item);
+        });
+    }
+
+    function filterChurches() {
+        const q = document.getElementById('churchSearch').value.toLowerCase();
+        const filtered = allChurches.filter(c => c.toLowerCase().includes(q));
+        renderChurchList(filtered);
+    }
+
+    function toggleChurch(name, checked) {
+        if (checked) {
+            selectedChurches.add(name);
+        } else {
+            selectedChurches.delete(name);
+        }
+        renderChurchTags();
+        filterChurches();
+    }
+
+    function renderChurchTags() {
+        const container = document.getElementById('churchTags');
+        container.innerHTML = '';
+        selectedChurches.forEach(name => {
+            const tag = document.createElement('span');
+            tag.className = 'church-tag';
+            const safeName = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            tag.innerHTML = `${name} <button class="remove-tag" onclick="toggleChurch('${safeName}', false)">&times;</button>`;
+            container.appendChild(tag);
+        });
+    }
+
+    // ========== SUBMIT DISTRICT LOG ==========
+    async function submitDistrictLog() {
+        const idx = document.getElementById('distVehicle').value;
+        const odometer = parseFloat(document.getElementById('distOdometer').value);
+        const date = document.getElementById('distDate').value;
+        const purpose = document.getElementById('distPurpose').value.trim();
+
+        if (idx === '') { showToast('Please select a vehicle.'); return; }
+        if (!date) { showToast('Please select a date.'); return; }
+        if (isNaN(odometer) || odometer <= 0) { showToast('Please enter the odometer reading.'); return; }
+        if (distPreviousOdometer !== null && odometer < distPreviousOdometer) {
+            showToast('Odometer reading is less than the previous recorded reading.'); return;
+        }
+
+        const vehicle = DISTRICT_VEHICLES[parseInt(idx)];
+        const driver = currentUser.name || currentUser.username;
+        const kmDriven = distPreviousOdometer !== null ? (odometer - distPreviousOdometer) : null;
+        const churchesStr = [...selectedChurches].join(', ');
+
+        const btn = document.getElementById('distSubmitBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Submitting…';
+
+        try {
+            const tokenResponse = await msalInstance.acquireTokenSilent({
+                scopes: loginRequest.scopes, account: currentUser });
+            accessToken = tokenResponse.accessToken;
+
+            const siteRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`,
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            const site = await siteRes.json();
+
+            const listRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${site.id}/lists?$filter=displayName eq '${CONFIG.districtVehicleLogsList}'`,
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            const lists = await listRes.json();
+            const logListId = lists.value[0].id;
+
+            const fields = {
+                Title: `${driver} – ${date}`,
+                VehicleName: vehicle.nickname,
+                VehicleDetails: vehicle.details,
+                Driver: driver,
+                TripDate: date,
+                OdometerReading: odometer,
+                ChurchesVisited: churchesStr,
+                Purpose: purpose || '',
+            };
+            if (kmDriven !== null) {
+                fields.KmDriven = kmDriven;
+                fields.PreviousOdometer = distPreviousOdometer;
+            }
+
+            const createRes = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${logListId}/items`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fields })
+                });
+
+            if (!createRes.ok) {
+                const err = await createRes.json();
+                throw new Error(err.error?.message || 'Failed to submit');
+            }
+
+            document.getElementById('successFlowType').textContent = 'district';
+            document.getElementById('successHeading').textContent = 'Trip Logged';
+            document.getElementById('successMessage').textContent = 'The district vehicle trip has been recorded.';
+            document.getElementById('successBackBtn').textContent = 'Log Another Trip';
+            document.getElementById('districtForm').style.display = 'none';
+            document.getElementById('successScreen').style.display = 'flex';
+
+        } catch (err) {
+            showToast('Submission failed: ' + err.message);
+            console.error(err);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Submit Trip Log';
         }
     }
 
@@ -995,7 +1538,23 @@
         recalc();
 
         document.getElementById('successScreen').style.display = 'none';
-        document.getElementById('mainForm').style.display = 'block';
+        document.getElementById('mainForm').style.display = 'none';
+        document.getElementById('vehicleSelectScreen').style.display = 'flex';
+    }
+
+    function resetDistrictForm() {
+        document.getElementById('distVehicle').value = '';
+        document.getElementById('distOdometer').value = '';
+        document.getElementById('distPurpose').value = '';
+        document.getElementById('distDate').valueAsDate = new Date();
+        document.getElementById('distKmDriven').textContent = '—';
+        document.getElementById('distOdometerHint').textContent = 'Select a vehicle to see the previous reading.';
+        document.getElementById('churchSearch').value = '';
+        distPreviousOdometer = null;
+        selectedChurches = new Set();
+        renderChurchTags();
+        if (allChurches.length > 0) renderChurchList(allChurches);
+        document.getElementById('districtForm').style.display = 'none';
     }
 
     function showToast(msg) {
