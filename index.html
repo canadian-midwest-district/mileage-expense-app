@@ -1308,24 +1308,37 @@
             const lists = await listRes.json();
             const logListId = lists.value[0].id;
 
-            const filterName = vehicle.nickname.replace(/'/g, "''");
-            const itemsRes = await fetch(
-                `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${logListId}/items` +
-                `?$expand=fields($select=Title,OdometerReading,TripDate)` +
-                `&$filter=fields/Title eq '${filterName}'` +
-                `&$top=50`,
-                { headers: { 'Authorization': `Bearer ${accessToken}` } });
-            const items = await itemsRes.json();
+            // Fetch all log items — Graph API $filter and $orderby on fields/
+            // subproperties are unreliable for SharePoint lists (stale search
+            // index, silently ignored sort). Filter and sort client-side instead.
+            let allItems = [];
+            let nextLink = `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${logListId}/items` +
+                `?$expand=fields($select=Title,OdometerReading,TripDate)&$top=200`;
 
-            if (items.value && items.value.length > 0) {
-                // Sort client-side — Graph API $orderby on fields/ subproperties is unreliable
-                items.value.sort((a, b) => {
+            while (nextLink) {
+                const res = await fetch(nextLink, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` },
+                    cache: 'no-store'
+                });
+                const data = await res.json();
+                if (data.value) allItems = allItems.concat(data.value);
+                nextLink = data['@odata.nextLink'] || null;
+            }
+
+            // Client-side filter by vehicle name
+            const vehicleItems = allItems.filter(
+                item => item.fields && item.fields.Title === vehicle.nickname
+            );
+
+            if (vehicleItems.length > 0) {
+                // Client-side sort by TripDate descending (newest first)
+                vehicleItems.sort((a, b) => {
                     const dateA = a.fields.TripDate || '';
                     const dateB = b.fields.TripDate || '';
                     return dateB.localeCompare(dateA);
                 });
-                distPreviousOdometer = items.value[0].fields.OdometerReading;
-                const lastDate = (items.value[0].fields.TripDate || '').split('T')[0] || 'unknown date';
+                distPreviousOdometer = vehicleItems[0].fields.OdometerReading;
+                const lastDate = (vehicleItems[0].fields.TripDate || '').split('T')[0] || 'unknown date';
                 hint.textContent = `Previous reading: ${distPreviousOdometer.toLocaleString()} km (as of ${lastDate})`;
             } else {
                 distPreviousOdometer = null;
