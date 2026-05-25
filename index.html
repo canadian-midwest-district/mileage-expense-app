@@ -590,6 +590,81 @@
             line-height: 1;
         }
 
+        /* ========== CONTACT LOGGING PROMPT MODAL ========== */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.4);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 500;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--card);
+            border-radius: var(--radius);
+            padding: 28px;
+            max-width: 420px;
+            width: 100%;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+
+        .modal-content h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 12px;
+        }
+
+        .modal-content p {
+            font-size: 15px;
+            color: var(--text-light);
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            flex-direction: row;
+        }
+
+        .modal-buttons .btn-modal {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .modal-buttons .btn-modal-yes {
+            background: var(--primary);
+            color: white;
+        }
+
+        .modal-buttons .btn-modal-yes:hover {
+            background: var(--primary-dark);
+        }
+
+        .modal-buttons .btn-modal-no {
+            background: #f0f0f0;
+            color: var(--text);
+        }
+
+        .modal-buttons .btn-modal-no:hover {
+            background: #e0e0e0;
+        }
+
         @media (max-width: 380px) {
             .expense-row { flex-direction: column; gap: 8px; }
             .expense-row .field.amount { flex: 1; }
@@ -641,6 +716,13 @@
     <h2>Sign In</h2>
     <p>Use your Microsoft 365 account to submit expense claims.</p>
     <button class="btn btn-primary" onclick="signIn()">Sign in with Microsoft</button>
+    <p style="margin-top:24px; font-size:14px; color:var(--text-light);">
+        Ordaining Council or District Licensing Committee member without a CMD account?<br>
+        <a href="#" onclick="startExternalSubmission(); return false;"
+           style="color:var(--accent); text-decoration:underline; font-weight:600;">
+            File a claim without signing in →
+        </a>
+    </p>
 </div>
 
 <!-- Vehicle Selection Screen -->
@@ -671,6 +753,22 @@
 
 <!-- Main Form -->
 <div id="mainForm" class="container" style="display:none;">
+
+    <!-- External Submitter (only visible in no-account mode) -->
+    <div class="card" id="externalSubmitterCard" style="display:none;">
+        <div class="card-title">Your Information</div>
+        <div style="font-size:13px; color:var(--text-light); margin-bottom:12px;">
+            Because you're submitting without signing in, we need your contact details so the approver can reach you.
+        </div>
+        <div class="field">
+            <label>Full Name</label>
+            <input type="text" id="externalName" placeholder="Jane Doe">
+        </div>
+        <div class="field">
+            <label>Email Address</label>
+            <input type="email" id="externalEmail" placeholder="you@example.com">
+        </div>
+    </div>
 
     <!-- Claim Info -->
     <div class="card">
@@ -854,6 +952,18 @@
     <button class="btn btn-primary" id="successBackBtn" onclick="handleSuccessBack()">Submit Another</button>
 </div>
 
+<!-- Contact Logging Prompt Modal -->
+<div id="contactLogModal" class="modal-overlay">
+    <div class="modal-content">
+        <h3>Log a Church Contact?</h3>
+        <p>You've logged a trip. Would you like to record a church contact or engagement in the District Dashboard now?</p>
+        <div class="modal-buttons">
+            <button class="btn-modal btn-modal-yes" onclick="openContactLogging()">Yes, Log Contact</button>
+            <button class="btn-modal btn-modal-no" onclick="skipContactLogging()">Not Now</button>
+        </div>
+    </div>
+</div>
+
 <!-- Toast -->
 <div id="toast" class="toast"></div>
 
@@ -882,6 +992,26 @@
     let allChurches = [];
     let selectedChurches = new Set();
     let distPreviousOdometer = null;
+    let isExternalMode = false;
+
+    // Edge function endpoint for unauthenticated submissions
+    // (district-tracker Supabase project; project ref sgoxvyjbyqtvsfurkllf)
+    const EXTERNAL_SUBMIT_URL =
+        'https://sgoxvyjbyqtvsfurkllf.supabase.co/functions/v1/mileage-claim-external';
+
+    // Entry point for OC / DLC members without a CMD M365 account.
+    // Skips MSAL entirely and drops them straight into the Personal Vehicle
+    // claim form with a name/email capture card. Submit posts to the edge
+    // function above, which writes into the same SharePoint list authenticated
+    // users hit — flagged in Notes for identity verification on review.
+    function startExternalSubmission() {
+        isExternalMode = true;
+        document.getElementById('loginScreen').style.display = 'none';
+        document.getElementById('externalSubmitterCard').style.display = 'block';
+        document.getElementById('mainForm').style.display = 'block';
+        document.getElementById('claimDate').valueAsDate = new Date();
+        if (document.querySelectorAll('.travel-day').length === 0) { addDay(); }
+    }
 
     async function signIn() {
         try {
@@ -1161,6 +1291,69 @@
         const btn = document.getElementById('submitBtn');
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Submitting...';
+
+        // ── External (unauthenticated) submission path ──────────────────────
+        // OC / DLC members without a CMD M365 account post to the edge
+        // function, which writes to SharePoint via app-only Graph. Receipts
+        // are not supported on this path (no SharePoint drive write without
+        // a user token) — they're prompted to email receipts to the approver.
+        if (isExternalMode) {
+            const submitterName = document.getElementById('externalName').value.trim();
+            const submitterEmail = document.getElementById('externalEmail').value.trim();
+            if (!submitterName) { showToast('Please enter your name.'); btn.disabled = false; btn.innerHTML = 'Submit Claim'; return; }
+            if (!submitterEmail) { showToast('Please enter your email.'); btn.disabled = false; btn.innerHTML = 'Submit Claim'; return; }
+
+            const receiptsPresent = expenseData.some(e => e.file);
+            const expenseLinesExt = expenseData.map(e =>
+                `${e.desc || '(no description)'}: $${e.amount.toFixed(2)} | Receipt: ${e.file ? 'EMAIL TO APPROVER — ' + e.file.name : 'no receipt'}`
+            );
+            const expenseDetailsExt = expenseLinesExt.length > 0
+                ? expenseLinesExt.join('\n') + `\nTOTAL EXPENSES: $${totalExpenseDollars.toFixed(2)}`
+                : '';
+
+            try {
+                const res = await fetch(EXTERNAL_SUBMIT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        submitterName,
+                        submitterEmail,
+                        claimCategory,
+                        purpose,
+                        claimDate,
+                        mileageBreakdown,
+                        totalKm,
+                        totalMileageDollars,
+                        expenseDetails: expenseDetailsExt,
+                        totalExpenseDollars,
+                        grandTotal,
+                        notes,
+                        paymentMethod,
+                        etransferEmail,
+                    }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ error: res.statusText }));
+                    throw new Error(err.error || err.detail || 'Submission failed');
+                }
+                document.getElementById('successFlowType').textContent = 'personal';
+                document.getElementById('successHeading').textContent = 'Claim Submitted';
+                document.getElementById('successMessage').textContent = receiptsPresent
+                    ? `Your claim was submitted. Please email your receipt photos/PDFs to chris@canadianmidwest.ca with subject "Receipts for ${submitterName} ${claimDate}" — the approver needs them to finalize.`
+                    : "Your claim has been submitted and sent for approval. You'll be notified once it's reviewed.";
+                document.getElementById('successBackBtn').textContent = 'Submit Another Claim';
+                document.getElementById('mainForm').style.display = 'none';
+                document.getElementById('externalSubmitterCard').style.display = 'none';
+                document.getElementById('successScreen').style.display = 'flex';
+            } catch (err) {
+                showToast('Submission failed: ' + err.message);
+                console.error(err);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Submit Claim';
+            }
+            return;
+        }
 
         try {
             // Refresh token
@@ -1611,7 +1804,7 @@
                 : 'The district vehicle trip has been recorded.';
             document.getElementById('successBackBtn').textContent = 'Log Another Trip';
             document.getElementById('districtForm').style.display = 'none';
-            document.getElementById('successScreen').style.display = 'flex';
+            document.getElementById('contactLogModal').classList.add('active');
 
         } catch (err) {
             showToast('Submission failed: ' + err.message);
@@ -1639,8 +1832,19 @@
         recalc();
 
         document.getElementById('successScreen').style.display = 'none';
-        document.getElementById('mainForm').style.display = 'none';
-        document.getElementById('vehicleSelectScreen').style.display = 'flex';
+
+        // External-mode users stay on the public claim form and never see the
+        // authenticated vehicle picker (district vehicles aren't theirs to
+        // log). Authenticated users go back to the vehicle picker as normal.
+        if (isExternalMode) {
+            document.getElementById('externalName').value = '';
+            document.getElementById('externalEmail').value = '';
+            document.getElementById('externalSubmitterCard').style.display = 'block';
+            document.getElementById('mainForm').style.display = 'block';
+        } else {
+            document.getElementById('mainForm').style.display = 'none';
+            document.getElementById('vehicleSelectScreen').style.display = 'flex';
+        }
     }
 
     function resetDistrictForm() {
@@ -1665,6 +1869,24 @@
         toast.textContent = msg;
         toast.style.display = 'block';
         setTimeout(() => { toast.style.display = 'none'; }, 4000);
+    }
+
+    // ========== CONTACT LOGGING MODAL ==========
+    function openContactLogging() {
+        // Close the modal and open the district dashboard
+        document.getElementById('contactLogModal').classList.remove('active');
+        // Open dashboard in a new tab for contact logging
+        window.open('https://dashboard.canadianmidwest.ca', '_blank');
+        // Show success screen
+        setTimeout(() => {
+            document.getElementById('successScreen').style.display = 'flex';
+        }, 500);
+    }
+
+    function skipContactLogging() {
+        // Close the modal and show success screen
+        document.getElementById('contactLogModal').classList.remove('active');
+        document.getElementById('successScreen').style.display = 'flex';
     }
 
     // Init
