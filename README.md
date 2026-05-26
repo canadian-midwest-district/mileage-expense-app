@@ -141,5 +141,8 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-05-26
+- Added unauthenticated submission path for Ordaining Council and District Licensing Committee members who don't have CMD Microsoft 365 accounts. New "File a claim without signing in →" link on the login screen drops users into the personal-vehicle claim form with a name/email capture card. Submit posts to `mileage-claim-external` edge function (district-tracker Supabase) which writes to the same `Travel Expense Claims` SharePoint list authenticated users hit, flagged in Notes with `[EXTERNAL SUBMISSION — verify identity before approval]` and ` (external)` appended to Title. Receipts not supported on this path (no SharePoint drive write without a user token); external submitters with receipts are prompted on the success screen to email them to the approver. Commit `5afa7f6`.
+
 ### 2026-05-06
 - Fixed previous-odometer auto-fill on multi-stop driving days. The client-side sort used `TripDate` only, so when two list items shared a date the "latest" reading was non-deterministic (Graph return order). Now tiebreaks by `OdometerReading` desc — higher odo is by definition the later trip in the chain. Surfaced when Bernie's 2026-04-27 White Lightning entries (Winnipeg First Nations 71551 → Saskatoon New Life 72115) caused the form to auto-fill 71551 instead of 72115. Commit `7c1a97c`.
