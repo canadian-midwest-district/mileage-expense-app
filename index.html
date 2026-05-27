@@ -713,16 +713,20 @@
 
 <!-- Login Screen -->
 <div id="loginScreen" class="login-screen">
-    <h2>Sign In</h2>
-    <p>Use your Microsoft 365 account to submit expense claims.</p>
-    <button class="btn btn-primary" onclick="signIn()">Sign in with Microsoft</button>
-    <p style="margin-top:24px; font-size:14px; color:var(--text-light);">
-        Ordaining Council or District Licensing Committee member without a CMD account?<br>
-        <a href="#" onclick="startExternalSubmission(); return false;"
-           style="color:var(--accent); text-decoration:underline; font-weight:600;">
-            File a claim without signing in →
-        </a>
-    </p>
+    <h2>Submit a Claim</h2>
+
+    <div style="background:#fff8e1; border:1px solid #f0c54a; border-radius:8px; padding:14px 16px; margin:8px 0 20px; text-align:left; max-width:340px;">
+        <strong style="display:block; margin-bottom:6px; color:#7a5a00;">Ordaining Council &amp; DLC members:</strong>
+        <span style="font-size:14px; color:#5a4400;">You do <strong>not</strong> have a CMD Microsoft account. Use the orange button below — do not click "Sign in with Microsoft".</span>
+    </div>
+
+    <button class="btn btn-primary" onclick="startExternalSubmission()"
+            style="background:#e67e22; border-color:#e67e22;">
+        File a claim without signing in →
+    </button>
+
+    <p style="margin-top:28px; font-size:13px; color:var(--text-light);">CMD staff with a Microsoft 365 account:</p>
+    <button class="btn btn-outline" onclick="signIn()" style="max-width:300px;">Sign in with Microsoft</button>
 </div>
 
 <!-- Vehicle Selection Screen -->
@@ -1376,6 +1380,20 @@
                 { headers: { 'Authorization': `Bearer ${accessToken}` } }
             );
             const lists = await listRes.json();
+            // Guard against Graph returning an error envelope ({ error: {...} })
+            // instead of { value: [...] }. This happens when the signed-in
+            // identity (e.g. a personal Microsoft account, an unconsented
+            // guest, or a member without Sites.ReadWrite.All on this site)
+            // can authenticate against the tenant but can't read the list.
+            // Without this guard, the next line crashes with the unhelpful
+            // "Cannot read properties of undefined (reading '0')".
+            if (!Array.isArray(lists.value) || lists.value.length === 0) {
+                throw new Error(
+                    "Your Microsoft account doesn't have access to the Travel Expense Claims list. " +
+                    "If you're an Ordaining Council or District Licensing Committee member, please sign out " +
+                    "and use the \"File a claim without signing in →\" link on the sign-in screen instead."
+                );
+            }
             const listId = lists.value[0].id;
 
             // Upload receipts to SharePoint document library, build expense details text
