@@ -141,6 +141,13 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-02
+- Replaced the (now 2-option) Claim Category dropdown on the external path with a segmented-pill toggle (Licensing Committee | Ordaining Council), reusing the existing `.payment-option` style for visual consistency with the Cheque/E-Transfer switch. Neither option is pre-selected — submitter must make an explicit pick or `Please select a claim category` toasts on submit. Authenticated staff still see the original 4-option dropdown. Commit `39c3237`.
+- Restricted the external Claim Category to only Licensing Committee + Ordaining Council (was: all four staff categories). Last week a council member filed their mileage under Employee Mileage by mistake, routing into the wrong approval chain. Server-side allow-list in `mileage-claim-external` enforces the same restriction so the misrouting can't recur via direct API. Commit `9a00014`.
+
+### 2026-05-26 (evening hotfix)
+- A council member trying the M365 sign-in path hit `Cannot read properties of undefined (reading '0')` — Graph returned an error envelope and the next line blind-accessed `lists.value[0].id`. Guarded the authenticated path to detect the empty/missing `value` array and throw a clear message pointing the user to the external link. Also restructured the login screen so the "File a claim without signing in →" button is the orange primary CTA with a yellow callout addressed to OC/DLC members, and "Sign in with Microsoft" is demoted to a secondary outline button labeled for staff. Commit `712a570`.
+
 ### 2026-05-26
 - Added unauthenticated submission path for Ordaining Council and District Licensing Committee members who don't have CMD Microsoft 365 accounts. New "File a claim without signing in →" link on the login screen drops users into the personal-vehicle claim form with a name/email capture card. Submit posts to `mileage-claim-external` edge function (district-tracker Supabase) which writes to the same `Travel Expense Claims` SharePoint list authenticated users hit, flagged in Notes with `[EXTERNAL SUBMISSION — verify identity before approval]` and ` (external)` appended to Title. Receipts not supported on this path (no SharePoint drive write without a user token); external submitters with receipts are prompted on the success screen to email them to the approver. Commit `5afa7f6`.
 
