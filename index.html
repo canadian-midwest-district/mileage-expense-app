@@ -1008,12 +1008,27 @@
     // claim form with a name/email capture card. Submit posts to the edge
     // function above, which writes into the same SharePoint list authenticated
     // users hit — flagged in Notes for identity verification on review.
+    // Categories valid on the unauthenticated path. Anything else (e.g.
+    // Employee Mileage, DEXCOM) routes through a different approval chain
+    // that doesn't make sense for OC / DLC submitters and broke at least
+    // one approval when a council member picked Employee Mileage by
+    // mistake. Mirrored as a server-side allow-list in the edge function.
+    const EXTERNAL_CLAIM_CATEGORIES = ['Licensing Committee', 'Ordaining Council'];
+
     function startExternalSubmission() {
         isExternalMode = true;
         document.getElementById('loginScreen').style.display = 'none';
         document.getElementById('externalSubmitterCard').style.display = 'block';
         document.getElementById('mainForm').style.display = 'block';
         document.getElementById('claimDate').valueAsDate = new Date();
+
+        // Restrict the claim-category dropdown to the two categories that
+        // route to the OC/DLC approval chain.
+        const sel = document.getElementById('claimCategory');
+        sel.innerHTML = EXTERNAL_CLAIM_CATEGORIES
+            .map(c => `<option value="${c}">${c}</option>`)
+            .join('');
+
         if (document.querySelectorAll('.travel-day').length === 0) { addDay(); }
     }
 
