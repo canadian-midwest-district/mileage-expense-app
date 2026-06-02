@@ -779,12 +779,32 @@
         <div class="card-title">Claim Details</div>
         <div class="field">
             <label>Claim Category</label>
+            <!--
+              Two inputs share the same id="claimCategory" semantically: the
+              <select> for authenticated staff (4 categories) and the
+              segmented-pill radios for the unauthenticated OC/DLC path
+              (only 2 valid categories). The radios drive the hidden select
+              so the submit handler can keep reading one canonical value.
+              The select is hidden and cleared in startExternalSubmission().
+            -->
             <select id="claimCategory">
                 <option value="Employee Mileage">Employee Mileage</option>
                 <option value="DEXCOM">DEXCOM</option>
                 <option value="Licensing Committee">Licensing Committee</option>
                 <option value="Ordaining Council">Ordaining Council</option>
             </select>
+            <div class="payment-options" id="claimCategoryToggle" style="display:none;">
+                <label class="payment-option">
+                    <input type="radio" name="claimCategoryRadio" value="Licensing Committee"
+                           onchange="syncClaimCategoryFromRadio(this)">
+                    <span>Licensing Committee</span>
+                </label>
+                <label class="payment-option">
+                    <input type="radio" name="claimCategoryRadio" value="Ordaining Council"
+                           onchange="syncClaimCategoryFromRadio(this)">
+                    <span>Ordaining Council</span>
+                </label>
+            </div>
         </div>
         <div class="field">
             <label>Purpose / Details</label>
@@ -1008,12 +1028,14 @@
     // claim form with a name/email capture card. Submit posts to the edge
     // function above, which writes into the same SharePoint list authenticated
     // users hit — flagged in Notes for identity verification on review.
-    // Categories valid on the unauthenticated path. Anything else (e.g.
-    // Employee Mileage, DEXCOM) routes through a different approval chain
-    // that doesn't make sense for OC / DLC submitters and broke at least
-    // one approval when a council member picked Employee Mileage by
-    // mistake. Mirrored as a server-side allow-list in the edge function.
-    const EXTERNAL_CLAIM_CATEGORIES = ['Licensing Committee', 'Ordaining Council'];
+    // Mirrors the server-side allow-list in mileage-claim-external. The
+    // unauthenticated OC/DLC path can only submit under these two categories;
+    // staff categories (Employee Mileage, DEXCOM) route to a different
+    // approval chain and broke at least one approval when a council member
+    // picked Employee Mileage by mistake from the old dropdown.
+    function syncClaimCategoryFromRadio(radio) {
+        document.getElementById('claimCategory').value = radio.value;
+    }
 
     function startExternalSubmission() {
         isExternalMode = true;
@@ -1022,12 +1044,15 @@
         document.getElementById('mainForm').style.display = 'block';
         document.getElementById('claimDate').valueAsDate = new Date();
 
-        // Restrict the claim-category dropdown to the two categories that
-        // route to the OC/DLC approval chain.
+        // Swap the 4-option dropdown for two prominent toggle pills, and
+        // force an explicit pick (no default) so the category choice is a
+        // deliberate action.
         const sel = document.getElementById('claimCategory');
-        sel.innerHTML = EXTERNAL_CLAIM_CATEGORIES
-            .map(c => `<option value="${c}">${c}</option>`)
-            .join('');
+        sel.style.display = 'none';
+        sel.value = '';
+        document.getElementById('claimCategoryToggle').style.display = 'flex';
+        document.querySelectorAll('input[name="claimCategoryRadio"]')
+            .forEach(r => { r.checked = false; });
 
         if (document.querySelectorAll('.travel-day').length === 0) { addDay(); }
     }
@@ -1260,6 +1285,7 @@
         const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked').value;
         const etransferEmail = document.getElementById('etransferEmail').value.trim();
 
+        if (!claimCategory) { showToast('Please select a claim category.'); return; }
         if (!purpose) { showToast('Please enter the purpose / details.'); return; }
         if (!claimDate) { showToast('Please select a date.'); return; }
         if (paymentMethod === 'E-Transfer' && !etransferEmail) { showToast('Please enter your e-transfer email address.'); return; }
