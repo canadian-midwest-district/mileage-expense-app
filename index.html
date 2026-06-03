@@ -941,7 +941,34 @@
         </div>
     </div>
 
-    <div class="card">
+    <!--
+      Trip Type selector — only meaningful on the District Vehicle path
+      (not on Personal Vehicle Unclaimed, where personal use is implicit).
+      initDistrictForm() hides this card when isPersonalUnclaimed is true.
+      Personal Use is the rare case: staff borrows a district car with
+      DS approval for non-district reasons. The selection drives a tag
+      that gets prefixed to Purpose + appended to Title on submit.
+    -->
+    <div class="card" id="distTripTypeCard">
+        <div class="card-title">Trip Type</div>
+        <div class="payment-options" style="margin-top:0;">
+            <label class="payment-option">
+                <input type="radio" name="distTripType" value="District Business" checked
+                       onchange="onDistTripTypeChange()">
+                <span>District Business</span>
+            </label>
+            <label class="payment-option">
+                <input type="radio" name="distTripType" value="Personal Use"
+                       onchange="onDistTripTypeChange()">
+                <span>Personal Use</span>
+            </label>
+        </div>
+        <div id="distPersonalUseHint" style="display:none; margin-top:10px; padding:10px 12px; background:#fff8e1; border:1px solid #f0c54a; border-radius:6px; font-size:13px; color:#5a4400;">
+            Personal use of a district vehicle requires the District Superintendent's prior approval. This trip will be logged separately and flagged for review.
+        </div>
+    </div>
+
+    <div class="card" id="distChurchesCard">
         <div class="card-title">Churches Visited</div>
         <div class="church-picker-wrapper">
             <input type="text" class="church-search-input" id="churchSearch"
@@ -1582,6 +1609,36 @@
         document.getElementById('distKmDriven').textContent = '—';
         document.getElementById('distOdometerHint').textContent = 'Select a vehicle to see the previous reading.';
         distPreviousOdometer = null;
+
+        // Trip Type selector is meaningful only for district vehicles; for
+        // Personal Vehicle (No Claim) it would be a category error to even
+        // ask. Reset to District Business each time the form opens.
+        const tripTypeCard = document.getElementById('distTripTypeCard');
+        if (tripTypeCard) {
+            tripTypeCard.style.display = isPersonalUnclaimed ? 'none' : 'block';
+            const businessRadio = document.querySelector('input[name="distTripType"][value="District Business"]');
+            if (businessRadio) businessRadio.checked = true;
+            onDistTripTypeChange();
+        }
+    }
+
+    // Personal-use of a district vehicle hides the Churches Visited card
+    // (it's not a ministry trip) and shows a DS-approval reminder. The
+    // selected value is also read at submit time and tagged into Purpose +
+    // Title so the trip is filterable in the SharePoint list.
+    function onDistTripTypeChange() {
+        const picked = document.querySelector('input[name="distTripType"]:checked');
+        const isPersonal = picked && picked.value === 'Personal Use';
+        const churchesCard = document.getElementById('distChurchesCard');
+        const hint = document.getElementById('distPersonalUseHint');
+        if (churchesCard) churchesCard.style.display = isPersonal ? 'none' : 'block';
+        if (hint) hint.style.display = isPersonal ? 'block' : 'none';
+        if (isPersonal) {
+            // Clear any churches that were tentatively picked before the
+            // switch — they wouldn't be relevant on a personal trip.
+            selectedChurches = new Set();
+            renderChurchTags();
+        }
     }
 
     async function onDistrictVehicleChange() {
@@ -1773,9 +1830,20 @@
     // ========== SUBMIT DISTRICT LOG ==========
     async function submitDistrictLog() {
         const date = document.getElementById('distDate').value;
-        const purpose = document.getElementById('distPurpose').value.trim();
+        const purposeRaw = document.getElementById('distPurpose').value.trim();
         const driver = currentUser.name || currentUser.username;
+        const tripTypeEl = document.querySelector('input[name="distTripType"]:checked');
+        const isPersonalUseTrip = !isPersonalUnclaimed && tripTypeEl?.value === 'Personal Use';
+        // Personal-use trips don't visit churches; the card is hidden by
+        // onDistTripTypeChange and `selectedChurches` is cleared, so this
+        // is empty in that case.
         const churchesStr = [...selectedChurches].join(', ');
+        // Tag Purpose with the same flag pattern external submissions use,
+        // so the SharePoint list view shows the marker without needing a
+        // new column. Title also gets a suffix for at-a-glance scanning.
+        const purpose = isPersonalUseTrip
+            ? `[PERSONAL USE — DS-approved]${purposeRaw ? '\n' + purposeRaw : ''}`
+            : purposeRaw;
         let vehicleNickname, vehicleDetails, odometer, kmDriven;
 
         if (!date) { showToast('Please select a date.'); return; }
@@ -1823,7 +1891,7 @@
             const logListId = lists.value[0].id;
 
             const fields = {
-                Title: vehicleNickname,
+                Title: isPersonalUseTrip ? `${vehicleNickname} (personal use)` : vehicleNickname,
                 VehicleDetails: vehicleDetails,
                 Driver: driver,
                 TripDate: date,
@@ -1860,7 +1928,9 @@
             document.getElementById('successHeading').textContent = 'Trip Logged';
             document.getElementById('successMessage').textContent = isPersonalUnclaimed
                 ? 'Your personal vehicle trip has been recorded (no mileage claim).'
-                : 'The district vehicle trip has been recorded.';
+                : isPersonalUseTrip
+                    ? 'The personal-use trip has been recorded and flagged for review.'
+                    : 'The district vehicle trip has been recorded.';
             document.getElementById('successBackBtn').textContent = 'Log Another Trip';
             document.getElementById('districtForm').style.display = 'none';
             document.getElementById('contactLogModal').classList.add('active');
@@ -1920,6 +1990,11 @@
         selectedChurches = new Set();
         renderChurchTags();
         if (allChurches.length > 0) renderChurchList(allChurches);
+        // Reset Trip Type back to default so a fresh log doesn't inherit
+        // a previous Personal Use selection.
+        const businessRadio = document.querySelector('input[name="distTripType"][value="District Business"]');
+        if (businessRadio) businessRadio.checked = true;
+        onDistTripTypeChange();
         document.getElementById('districtForm').style.display = 'none';
     }
 
