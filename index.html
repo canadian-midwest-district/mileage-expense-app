@@ -672,6 +672,86 @@
             .total-box.grand { grid-column: 1; }
             .payment-options { flex-direction: column; }
         }
+
+        /* ========== RECEIPT CAPTURE (View A) ========== */
+        .receipt-step { display: none; }
+        .receipt-step.active { display: block; }
+
+        .receipt-capture-card {
+            text-align: center;
+            padding: 28px 20px;
+        }
+        .receipt-capture-card .capture-emoji { font-size: 52px; margin-bottom: 8px; }
+        .receipt-capture-card p { color: var(--text-light); font-size: 14px; margin-bottom: 20px; }
+
+        .receipt-file-input { display: none; }
+
+        .receipt-preview-img {
+            width: 100%;
+            max-height: 50vh;
+            object-fit: contain;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #fafafa;
+        }
+
+        .receipt-reading {
+            text-align: center;
+            padding: 48px 20px;
+            color: var(--text-light);
+        }
+        .receipt-reading .spinner-dark {
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            border: 3px solid rgba(0,120,212,0.2);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            margin-bottom: 14px;
+        }
+
+        .review-banner {
+            background: #fff8e1;
+            border: 1px solid #f0c54a;
+            border-radius: 8px;
+            padding: 12px 14px;
+            font-size: 13px;
+            color: #5a4400;
+            margin-bottom: 16px;
+        }
+
+        .amount-row { display: flex; gap: 12px; }
+        .amount-row .field { flex: 1; margin-bottom: 16px; }
+
+        .category-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .category-tile {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 48px;
+            padding: 10px 12px;
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            background: #fafafa;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            text-align: left;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .category-tile:hover { border-color: var(--primary); }
+        .category-tile.selected {
+            border-color: var(--primary);
+            background: rgba(0,120,212,0.08);
+        }
+        .category-tile .tile-icon { font-size: 20px; flex-shrink: 0; }
     </style>
 </head>
 <body>
@@ -694,12 +774,35 @@
         rate065: 0.65,
         rate020: 0.20,
         dailyHighRateLimit: 200,  // km/day at the higher rate before dropping to lower rate
+
+        // Receipt Processing System (DEXT replacement)
+        receiptClaimsList: 'Receipt Claims',
+        receiptCategoryList: 'Receipt Category Quick Picks',
+        // OCR endpoint (receipt-processor Vercel project). CONFIRM after the
+        // Vercel project is linked — update if the deployed URL differs.
+        receiptOcrUrl: 'https://receipt-processor.vercel.app/api/process-receipt',
     };
 
     const DISTRICT_VEHICLES = [
         { nickname: 'White Lightning', details: '2024 Toyota Camry – SK 913 NFQ' },
         { nickname: 'Silver Bullet',   details: '2019 Toyota Camry – SK 014 LPY' },
         { nickname: 'Blue Steel',      details: '2026 Toyota Corolla Cross – SK 341 PGZ' },
+    ];
+
+    // Two-letter province codes the receipt system understands (drives the
+    // GST vs provincial-tax split and the Sage .IMP tax codes downstream).
+    const RECEIPT_PROVINCES = ['SK', 'MB', 'AB', 'BC', 'ON', 'QC', 'NB', 'NS', 'NL', 'PE'];
+
+    // Fallback quick-picks used ONLY when the `Receipt Category Quick Picks`
+    // SharePoint list can't be read yet (it's maintained by Emmanuel; until
+    // it exists the capture flow still works). GLCode is the Sage account.
+    const DEFAULT_RECEIPT_CATEGORIES = [
+        { label: 'Fuel',          glCode: '5210', icon: '⛽' },
+        { label: 'Meals',         glCode: '5220', icon: '🍽️' },
+        { label: 'Lodging',       glCode: '5230', icon: '🏨' },
+        { label: 'Office',        glCode: '5240', icon: '📎' },
+        { label: 'Supplies',      glCode: '5250', icon: '📦' },
+        { label: 'Parking',       glCode: '5260', icon: '🅿️' },
     ];
 </script>
 
@@ -745,6 +848,10 @@
         <button class="btn-vehicle-choice" onclick="choosePersonalUnclaimed()">
             <div class="choice-title">Personal Vehicle (No Claim)</div>
             <div class="choice-desc">Log a trip for the record — no mileage claim</div>
+        </button>
+        <button class="btn-vehicle-choice" onclick="chooseSubmitReceipt()">
+            <div class="choice-title">Submit a Receipt</div>
+            <div class="choice-desc">Snap a receipt — taxes are read automatically</div>
         </button>
     </div>
 </div>
@@ -994,6 +1101,103 @@
     <div style="height: 24px;"></div>
 </div>
 
+<!-- Receipt Capture (View A) -->
+<div id="receiptCaptureView" class="container" style="display:none;">
+
+    <!-- Step 1: Capture -->
+    <div id="receiptStepCapture" class="receipt-step active">
+        <div class="card receipt-capture-card">
+            <div class="capture-emoji">🧾</div>
+            <div class="card-title" style="margin-bottom:6px;">Submit a Receipt</div>
+            <p>Take a clear photo of the whole receipt. The vendor, date, and tax
+               are read automatically — you just confirm.</p>
+            <label class="btn btn-primary" for="receiptPhoto">📷 Take Photo</label>
+            <input type="file" id="receiptPhoto" class="receipt-file-input"
+                   accept="image/*" capture="environment" onchange="onReceiptPhotoChosen(this)">
+            <button class="btn btn-outline" style="margin-top:12px;" onclick="cancelReceiptCapture()">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Step 2: Preview -->
+    <div id="receiptStepPreview" class="receipt-step">
+        <div class="card">
+            <div class="card-title">Looks good?</div>
+            <img id="receiptPreviewImg" class="receipt-preview-img" alt="Receipt preview">
+            <div style="display:flex; gap:12px; margin-top:16px;">
+                <button class="btn btn-outline" onclick="retakeReceipt()">Retake</button>
+                <button class="btn btn-primary" onclick="continueReceipt()">Continue</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 3: Reading (OCR in flight) -->
+    <div id="receiptStepReading" class="receipt-step">
+        <div class="card receipt-reading">
+            <div class="spinner-dark"></div>
+            <div>Reading receipt…</div>
+        </div>
+    </div>
+
+    <!-- Step 4: Verify & submit -->
+    <div id="receiptStepVerify" class="receipt-step">
+        <div class="card">
+            <div class="card-title">Confirm the details</div>
+            <div id="receiptReviewBanner" class="review-banner" style="display:none;"></div>
+
+            <div class="field">
+                <label>Vendor</label>
+                <input type="text" id="rcVendor" placeholder="Merchant name">
+            </div>
+            <div class="field">
+                <label>Date</label>
+                <input type="date" id="rcDate">
+            </div>
+            <div class="field">
+                <label>Province (where purchased)</label>
+                <select id="rcProvince"></select>
+            </div>
+
+            <div class="amount-row">
+                <div class="field">
+                    <label>Subtotal ($)</label>
+                    <input type="number" id="rcSubtotal" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="field">
+                    <label>GST ($)</label>
+                    <input type="number" id="rcGst" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+                </div>
+            </div>
+            <div class="amount-row">
+                <div class="field">
+                    <label>Provincial tax ($)</label>
+                    <input type="number" id="rcProvincialTax" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="field">
+                    <label>Total ($)</label>
+                    <input type="number" id="rcTotal" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Category</div>
+            <div class="category-grid" id="receiptCategoryGrid">
+                <div style="grid-column:1/-1; color:var(--text-light); font-size:14px;">Loading categories…</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="field" style="margin-bottom:0;">
+                <label>Note (optional)</label>
+                <textarea id="rcDescription" placeholder="What was this for?"></textarea>
+            </div>
+        </div>
+
+        <button class="btn btn-success" id="rcSubmitBtn" onclick="submitReceipt()">Submit Receipt</button>
+        <button class="btn btn-outline" style="margin-top:12px; margin-bottom:24px;" onclick="cancelReceiptCapture()">Cancel</button>
+    </div>
+</div>
+
 <!-- Success Screen -->
 <div id="successScreen" class="success-screen">
     <div class="checkmark">&#10003;</div>
@@ -1125,6 +1329,7 @@
         document.getElementById('mainForm').style.display = 'none';
         document.getElementById('vehicleSelectScreen').style.display = 'none';
         document.getElementById('districtForm').style.display = 'none';
+        document.getElementById('receiptCaptureView').style.display = 'none';
         document.getElementById('successScreen').style.display = 'none';
         allChurches = [];
         selectedChurches = new Set();
@@ -1170,6 +1375,10 @@
         document.getElementById('successScreen').style.display = 'none';
         if (flow === 'district') {
             resetDistrictForm();
+            document.getElementById('vehicleSelectScreen').style.display = 'flex';
+        } else if (flow === 'receipt') {
+            resetReceiptCapture();
+            document.getElementById('receiptCaptureView').style.display = 'none';
             document.getElementById('vehicleSelectScreen').style.display = 'flex';
         } else {
             resetForm();
@@ -2021,6 +2230,360 @@
         // Close the modal and show success screen
         document.getElementById('contactLogModal').classList.remove('active');
         document.getElementById('successScreen').style.display = 'flex';
+    }
+
+    // ========== RECEIPT CAPTURE (View A) ==========
+    let receiptImageBlob = null;       // compressed JPEG ready for OCR + upload
+    let receiptCategories = [];        // loaded quick-picks
+    let selectedReceiptCategoryIdx = null;
+
+    // Small Graph helpers, used by the receipt flow (mirrors the inline
+    // pattern the claim/district paths use).
+    async function refreshAccessToken() {
+        const t = await msalInstance.acquireTokenSilent({ scopes: loginRequest.scopes, account: currentUser });
+        accessToken = t.accessToken;
+    }
+    async function graphSite() {
+        const r = await fetch(
+            `https://graph.microsoft.com/v1.0/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`,
+            { headers: { 'Authorization': `Bearer ${accessToken}` } });
+        return r.json();
+    }
+    async function graphListId(siteId, displayName) {
+        const r = await fetch(
+            `https://graph.microsoft.com/v1.0/sites/${siteId}/lists?$filter=displayName eq '${displayName}'`,
+            { headers: { 'Authorization': `Bearer ${accessToken}` } });
+        const lists = await r.json();
+        if (!Array.isArray(lists.value) || lists.value.length === 0) {
+            throw new Error(`LIST_NOT_FOUND:${displayName}`);
+        }
+        return lists.value[0].id;
+    }
+
+    function showReceiptStep(stepId) {
+        document.querySelectorAll('#receiptCaptureView .receipt-step')
+            .forEach(s => s.classList.remove('active'));
+        document.getElementById(stepId).classList.add('active');
+    }
+
+    function chooseSubmitReceipt() {
+        document.getElementById('vehicleSelectScreen').style.display = 'none';
+        document.getElementById('receiptCaptureView').style.display = 'block';
+        resetReceiptCapture();
+        // Warm the category list in the background so it's ready at the verify step.
+        loadReceiptCategories();
+    }
+
+    function resetReceiptCapture() {
+        receiptImageBlob = null;
+        selectedReceiptCategoryIdx = null;
+        document.getElementById('receiptPhoto').value = '';
+        document.getElementById('receiptReviewBanner').style.display = 'none';
+        ['rcVendor', 'rcDate', 'rcSubtotal', 'rcGst', 'rcProvincialTax', 'rcTotal', 'rcDescription']
+            .forEach(id => { document.getElementById(id).value = ''; });
+        showReceiptStep('receiptStepCapture');
+    }
+
+    function cancelReceiptCapture() {
+        document.getElementById('receiptCaptureView').style.display = 'none';
+        resetReceiptCapture();
+        document.getElementById('vehicleSelectScreen').style.display = 'flex';
+    }
+
+    // Scale longest side to 1200px and re-encode as JPEG q0.8 — keeps OCR
+    // token cost and SharePoint storage down (phone photos are 3-5MB).
+    function compressImage(file) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                const maxSide = 1200;
+                let { width, height } = img;
+                if (Math.max(width, height) > maxSide) {
+                    const scale = maxSide / Math.max(width, height);
+                    width = Math.round(width * scale);
+                    height = Math.round(height * scale);
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+                canvas.toBlob(
+                    blob => blob ? resolve(blob) : reject(new Error('Compression failed')),
+                    'image/jpeg', 0.8);
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
+            img.src = url;
+        });
+    }
+
+    async function onReceiptPhotoChosen(input) {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        try {
+            receiptImageBlob = await compressImage(file);
+            document.getElementById('receiptPreviewImg').src = URL.createObjectURL(receiptImageBlob);
+            showReceiptStep('receiptStepPreview');
+        } catch (err) {
+            showToast('Could not process that photo. Try again.');
+            console.error(err);
+        }
+    }
+
+    function retakeReceipt() {
+        document.getElementById('receiptPhoto').value = '';
+        showReceiptStep('receiptStepCapture');
+    }
+
+    async function continueReceipt() {
+        if (!receiptImageBlob) { retakeReceipt(); return; }
+        showReceiptStep('receiptStepReading');
+        let data = null;
+        try {
+            const fd = new FormData();
+            fd.append('receipt', receiptImageBlob, 'receipt.jpg');
+            const res = await fetch(CONFIG.receiptOcrUrl, { method: 'POST', body: fd });
+            if (!res.ok) throw new Error('OCR_HTTP_' + res.status);
+            data = await res.json();
+        } catch (err) {
+            console.error(err);
+            // OCR unavailable — let the user key it in by hand rather than dead-end.
+            data = { needs_review: true, tax_note: 'Automatic reading was unavailable — please enter the details.' };
+            showToast('Could not read the receipt automatically — please fill it in.');
+        }
+        populateReceiptForm(data || {});
+        showReceiptStep('receiptStepVerify');
+    }
+
+    function populateReceiptForm(data) {
+        document.getElementById('rcVendor').value = data.vendor || '';
+        document.getElementById('rcDate').value = /^\d{4}-\d{2}-\d{2}$/.test(data.date || '')
+            ? data.date : new Date().toISOString().slice(0, 10);
+
+        // Province dropdown — blank first so a null/unknown province is an
+        // explicit pick, not a silent default to SK.
+        const sel = document.getElementById('rcProvince');
+        sel.innerHTML = '<option value="">— Select —</option>' +
+            RECEIPT_PROVINCES.map(p => `<option value="${p}">${p}</option>`).join('');
+        sel.value = RECEIPT_PROVINCES.includes(data.province) ? data.province : '';
+
+        const num = v => (v === null || v === undefined || isNaN(v)) ? '' : Number(v).toFixed(2);
+        document.getElementById('rcSubtotal').value = num(data.subtotal);
+        document.getElementById('rcGst').value = num(data.gst);
+        document.getElementById('rcProvincialTax').value = num(data.provincial_tax);
+        document.getElementById('rcTotal').value = num(data.total);
+        document.getElementById('rcDescription').value = data.description || '';
+
+        const banner = document.getElementById('receiptReviewBanner');
+        if (data.needs_review || !data.province || data.confidence === 'low') {
+            banner.style.display = 'block';
+            banner.textContent = data.tax_note
+                ? `Please double-check: ${data.tax_note}`
+                : 'Please double-check the province and tax amounts before submitting.';
+        } else {
+            banner.style.display = 'none';
+        }
+    }
+
+    async function loadReceiptCategories() {
+        const grid = document.getElementById('receiptCategoryGrid');
+        try {
+            await refreshAccessToken();
+            const site = await graphSite();
+            const listId = await graphListId(site.id, CONFIG.receiptCategoryList);
+            let url = `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items?$expand=fields&$top=100`;
+            const rows = [];
+            while (url) {
+                const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+                const d = await res.json();
+                (d.value || []).forEach(it => {
+                    const f = it.fields || {};
+                    if (f.IsActive === false) return;
+                    const label = f.Title || f.Label;
+                    const glCode = f.GLCode || f.GlCode;
+                    if (label && glCode) {
+                        rows.push({ label, glCode: String(glCode), icon: f.Icon || '🏷️', sort: f.SortOrder || 0 });
+                    }
+                });
+                url = d['@odata.nextLink'] || null;
+            }
+            rows.sort((a, b) => (a.sort - b.sort) || a.label.localeCompare(b.label));
+            receiptCategories = rows.length ? rows : DEFAULT_RECEIPT_CATEGORIES.slice();
+        } catch (err) {
+            // List not created yet (Phase 1 infra) or unreadable — fall back so
+            // the capture flow stays testable.
+            console.warn('Receipt categories: using fallback —', err.message);
+            receiptCategories = DEFAULT_RECEIPT_CATEGORIES.slice();
+        }
+        renderReceiptCategories();
+    }
+
+    function renderReceiptCategories() {
+        const grid = document.getElementById('receiptCategoryGrid');
+        grid.innerHTML = '';
+        receiptCategories.forEach((c, i) => {
+            const tile = document.createElement('button');
+            tile.type = 'button';
+            tile.className = 'category-tile' + (i === selectedReceiptCategoryIdx ? ' selected' : '');
+            tile.onclick = () => selectReceiptCategory(i);
+            tile.innerHTML = `<span class="tile-icon">${c.icon || '🏷️'}</span><span>${c.label}</span>`;
+            grid.appendChild(tile);
+        });
+    }
+
+    function selectReceiptCategory(idx) {
+        selectedReceiptCategoryIdx = idx;
+        renderReceiptCategories();
+    }
+
+    // ReceiptRef = REC-YYYY-NNNN, sequential per year, zero-padded to 4.
+    // Graph $orderby on SharePoint list fields is unreliable (see district
+    // log code), so compute the max client-side.
+    async function nextReceiptRef(siteId, listId) {
+        const year = new Date().getFullYear();
+        const prefix = `REC-${year}-`;
+        let max = 0;
+        let url = `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`;
+        while (url) {
+            const res = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${accessToken}`, 'Cache-Control': 'no-cache' },
+                cache: 'no-store'
+            });
+            const d = await res.json();
+            (d.value || []).forEach(it => {
+                const ref = (it.fields || {}).ReceiptRef || '';
+                if (ref.startsWith(prefix)) {
+                    const n = parseInt(ref.slice(prefix.length), 10);
+                    if (!isNaN(n) && n > max) max = n;
+                }
+            });
+            url = d['@odata.nextLink'] || null;
+        }
+        return prefix + String(max + 1).padStart(4, '0');
+    }
+
+    async function submitReceipt() {
+        const vendor = document.getElementById('rcVendor').value.trim();
+        const date = document.getElementById('rcDate').value;
+        const province = document.getElementById('rcProvince').value;
+        const subtotal = parseFloat(document.getElementById('rcSubtotal').value);
+        const gst = parseFloat(document.getElementById('rcGst').value);
+        const provincialTax = parseFloat(document.getElementById('rcProvincialTax').value);
+        const total = parseFloat(document.getElementById('rcTotal').value);
+        const description = document.getElementById('rcDescription').value.trim();
+
+        if (!vendor) { showToast('Please enter the vendor.'); return; }
+        if (!date) { showToast('Please enter the date.'); return; }
+        if (isNaN(total) || total <= 0) { showToast('Please enter the total amount.'); return; }
+        if (selectedReceiptCategoryIdx === null) { showToast('Please pick a category.'); return; }
+        if (!receiptImageBlob) { showToast('Receipt photo is missing — please retake.'); return; }
+
+        const cat = receiptCategories[selectedReceiptCategoryIdx];
+        const submittedBy = currentUser.name || currentUser.username;
+        const num = v => isNaN(v) ? 0 : Math.round(v * 100) / 100;
+
+        const btn = document.getElementById('rcSubmitBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Submitting…';
+
+        try {
+            await refreshAccessToken();
+            const site = await graphSite();
+            let listId;
+            try {
+                listId = await graphListId(site.id, CONFIG.receiptClaimsList);
+            } catch (e) {
+                if (String(e.message).startsWith('LIST_NOT_FOUND')) {
+                    throw new Error('The Receipt Claims list isn\'t set up yet. Ask the office to finish setup.');
+                }
+                throw e;
+            }
+
+            // Upload the compressed image, then create the list item. Retry once
+            // on a duplicate ReceiptRef (race with another submitter).
+            const safeEmployee = submittedBy.replace(/[^a-zA-Z0-9 _-]/g, '');
+            let receiptUrl = '';
+            let createdRef = null;
+
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const ref = await nextReceiptRef(site.id, listId);
+                const uploadPath = `Travel Receipts/${date}/${safeEmployee}/${ref}.jpg`;
+
+                if (!receiptUrl) {
+                    const uploadRes = await fetch(
+                        `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/root:/${uploadPath}:/content`,
+                        {
+                            method: 'PUT',
+                            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'image/jpeg' },
+                            body: receiptImageBlob
+                        });
+                    if (uploadRes.ok) {
+                        const uploaded = await uploadRes.json();
+                        try {
+                            const linkRes = await fetch(
+                                `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/items/${uploaded.id}/createLink`,
+                                {
+                                    method: 'POST',
+                                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ type: 'view', scope: 'organization' })
+                                });
+                            receiptUrl = linkRes.ok ? ((await linkRes.json()).link?.webUrl || uploaded.webUrl) : uploaded.webUrl;
+                        } catch { receiptUrl = uploaded.webUrl; }
+                    }
+                }
+
+                const fields = {
+                    Title: `${submittedBy} - ${date}`,
+                    ReceiptRef: ref,
+                    Vendor: vendor,
+                    // noon Central with offset — a bare date is read as UTC
+                    // midnight and rolls back a day in SK/MB.
+                    ReceiptDate: `${date}T12:00:00-06:00`,
+                    Subtotal: num(subtotal),
+                    Province: province,
+                    GSTAmount: num(gst),
+                    ProvincialTax: num(provincialTax),
+                    TotalAmount: num(total),
+                    Category: `${cat.glCode} - ${cat.label}`,
+                    CategoryLabel: cat.label,
+                    Description: description,
+                    SubmittedBy: submittedBy,
+                    SubmittedAt: new Date().toISOString(),
+                    ReceiptImageURL: receiptUrl,
+                    Status: 'submitted'
+                };
+
+                const createRes = await fetch(
+                    `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items`,
+                    {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fields })
+                    });
+
+                if (createRes.ok) { createdRef = ref; break; }
+                if (attempt === 1) {
+                    const err = await createRes.json().catch(() => ({}));
+                    throw new Error(err.error?.message || 'Failed to submit receipt');
+                }
+                // else: loop and recompute the ref
+            }
+
+            document.getElementById('successFlowType').textContent = 'receipt';
+            document.getElementById('successHeading').textContent = 'Receipt Submitted';
+            document.getElementById('successMessage').textContent =
+                `Saved as ${createdRef}. It'll appear in the reconciliation queue for review.`;
+            document.getElementById('successBackBtn').textContent = 'Submit Another Receipt';
+            document.getElementById('receiptCaptureView').style.display = 'none';
+            document.getElementById('successScreen').style.display = 'flex';
+        } catch (err) {
+            showToast('Submission failed: ' + err.message);
+            console.error(err);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Submit Receipt';
+        }
     }
 
     // Init
