@@ -141,6 +141,9 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-14
+- Phase 2 of the Receipt Processing System (DEXT replacement): added a "Submit a Receipt" tile to the vehicle picker and a 4-step mobile capture flow (camera → preview → OCR read → verify & submit) per spec §7. Compresses photos to 1200px JPEG, posts to the `receipt-processor` OCR endpoint (`receipt-processor-eight.vercel.app`), pre-fills province-aware tax fields for confirmation (province never defaults to SK; low-confidence/needs-review results raise a check banner), loads category quick-picks from the `Receipt Category Quick Picks` SharePoint list with a built-in fallback, generates `REC-YYYY-NNNN` with race retry, uploads the image to `Travel Receipts/` and creates a `Receipt Claims` item (`status=submitted`). `ReceiptDate` sent as noon Central to avoid the UTC-midnight day rollback. Commits `39b5dd5`, `39c3237`-successor. NOTE: full submit needs the `Receipt Claims` + `Receipt Category Quick Picks` SharePoint lists to exist (pending Atlas).
+
 ### 2026-06-02
 - Replaced the (now 2-option) Claim Category dropdown on the external path with a segmented-pill toggle (Licensing Committee | Ordaining Council), reusing the existing `.payment-option` style for visual consistency with the Cheque/E-Transfer switch. Neither option is pre-selected — submitter must make an explicit pick or `Please select a claim category` toasts on submit. Authenticated staff still see the original 4-option dropdown. Commit `39c3237`.
 - Restricted the external Claim Category to only Licensing Committee + Ordaining Council (was: all four staff categories). Last week a council member filed their mileage under Employee Mileage by mistake, routing into the wrong approval chain. Server-side allow-list in `mileage-claim-external` enforces the same restriction so the misrouting can't recur via direct API. Commit `9a00014`.
