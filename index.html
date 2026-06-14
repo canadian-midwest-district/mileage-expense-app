@@ -1172,7 +1172,13 @@
                     <input type="number" id="rcProvincialTax" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
                 </div>
                 <div class="field">
-                    <label>Total ($)</label>
+                    <label>Tip ($)</label>
+                    <input type="number" id="rcTip" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+                </div>
+            </div>
+            <div class="amount-row">
+                <div class="field">
+                    <label>Total paid ($)</label>
                     <input type="number" id="rcTotal" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
                 </div>
             </div>
@@ -2278,7 +2284,7 @@
         selectedReceiptCategoryIdx = null;
         document.getElementById('receiptPhoto').value = '';
         document.getElementById('receiptReviewBanner').style.display = 'none';
-        ['rcVendor', 'rcDate', 'rcSubtotal', 'rcGst', 'rcProvincialTax', 'rcTotal', 'rcDescription']
+        ['rcVendor', 'rcDate', 'rcSubtotal', 'rcGst', 'rcProvincialTax', 'rcTip', 'rcTotal', 'rcDescription']
             .forEach(id => { document.getElementById(id).value = ''; });
         showReceiptStep('receiptStepCapture');
     }
@@ -2371,6 +2377,7 @@
         document.getElementById('rcSubtotal').value = num(data.subtotal);
         document.getElementById('rcGst').value = num(data.gst);
         document.getElementById('rcProvincialTax').value = num(data.provincial_tax);
+        document.getElementById('rcTip').value = num(data.tip);
         document.getElementById('rcTotal').value = num(data.total);
         document.getElementById('rcDescription').value = data.description || '';
 
@@ -2469,6 +2476,7 @@
         const subtotal = parseFloat(document.getElementById('rcSubtotal').value);
         const gst = parseFloat(document.getElementById('rcGst').value);
         const provincialTax = parseFloat(document.getElementById('rcProvincialTax').value);
+        const tip = parseFloat(document.getElementById('rcTip').value);
         const total = parseFloat(document.getElementById('rcTotal').value);
         const description = document.getElementById('rcDescription').value.trim();
 
@@ -2543,6 +2551,8 @@
                     Province: province,
                     GSTAmount: num(gst),
                     ProvincialTax: num(provincialTax),
+                    // TotalAmount is the amount actually paid, incl. tip. Tip is
+                    // a separate, non-taxed line — GST/PST cover the pre-tip bill.
                     TotalAmount: num(total),
                     Category: `${cat.glCode} - ${cat.label}`,
                     CategoryLabel: cat.label,
@@ -2552,14 +2562,32 @@
                     ReceiptImageURL: receiptUrl,
                     Status: 'submitted'
                 };
+                // Only send TipAmount when there's a tip, so non-tip receipts
+                // never touch the column. If the column isn't provisioned yet,
+                // self-heal: drop TipAmount, flag the item, and still save.
+                if (num(tip) > 0) fields.TipAmount = num(tip);
 
-                const createRes = await fetch(
+                const postItem = (f) => fetch(
                     `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items`,
                     {
                         method: 'POST',
                         headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fields })
+                        body: JSON.stringify({ fields: f })
                     });
+
+                let createRes = await postItem(fields);
+
+                if (!createRes.ok && fields.TipAmount !== undefined) {
+                    const errText = await createRes.clone().text().catch(() => '');
+                    // SharePoint list has no TipAmount column yet — don't fail the
+                    // whole submission over it; save without the tip and flag it.
+                    if (/TipAmount/i.test(errText)) {
+                        delete fields.TipAmount;
+                        const tipNote = `Tip $${num(tip).toFixed(2)} not saved — add a TipAmount column to the Receipt Claims list.`;
+                        fields.Flag = fields.Flag ? `${fields.Flag}; ${tipNote}` : tipNote;
+                        createRes = await postItem(fields);
+                    }
+                }
 
                 if (createRes.ok) { createdRef = ref; break; }
                 if (attempt === 1) {
