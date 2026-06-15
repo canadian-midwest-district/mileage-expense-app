@@ -141,6 +141,9 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-14 (evening)
+- Added a **Tip** field to the receipt verify form (relabeled the last field "Total paid"), populated from OCR. Submit sends `TipAmount` only when a tip is present and **self-heals** if the `Receipt Claims` list lacks a `TipAmount` column (drops it, flags the item, still saves) — so the capture flow doesn't depend on a manual SharePoint change. Pairs with the receipt-processor tip/tax-inclusive OCR fixes.
+
 ### 2026-06-14
 - Phase 2 of the Receipt Processing System (DEXT replacement): added a "Submit a Receipt" tile to the vehicle picker and a 4-step mobile capture flow (camera → preview → OCR read → verify & submit) per spec §7. Compresses photos to 1200px JPEG, posts to the `receipt-processor` OCR endpoint (`receipt-processor-eight.vercel.app`), pre-fills province-aware tax fields for confirmation (province never defaults to SK; low-confidence/needs-review results raise a check banner), loads category quick-picks from the `Receipt Category Quick Picks` SharePoint list with a built-in fallback, generates `REC-YYYY-NNNN` with race retry, uploads the image to `Travel Receipts/` and creates a `Receipt Claims` item (`status=submitted`). `ReceiptDate` sent as noon Central to avoid the UTC-midnight day rollback. Commits `39b5dd5`, `39c3237`-successor. NOTE: full submit needs the `Receipt Claims` + `Receipt Category Quick Picks` SharePoint lists to exist (pending Atlas).
 
