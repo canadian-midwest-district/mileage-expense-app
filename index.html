@@ -752,6 +752,20 @@
             background: rgba(0,120,212,0.08);
         }
         .category-tile .tile-icon { font-size: 20px; flex-shrink: 0; }
+        .category-tile .tile-gl { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--text-light); flex-shrink: 0; }
+        .category-search {
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 48px;
+            padding: 10px 14px;
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            background: #fff;
+            font-family: inherit;
+            font-size: 15px;
+            color: var(--text);
+        }
+        .category-search:focus { outline: none; border-color: var(--primary); }
     </style>
 </head>
 <body>
@@ -1198,11 +1212,11 @@
                 <div style="grid-column:1/-1; color:var(--text-light); font-size:14px;">Loading categories…</div>
             </div>
             <!-- "Other…" searchable picker for the non-tile (search-only) GL codes -->
-            <div id="receiptOtherPicker" style="display:none; margin-top:12px;">
-                <input type="text" id="receiptOtherSearch" placeholder="Search all categories or GL code…"
-                       oninput="renderReceiptOtherResults()" autocomplete="off"
-                       style="width:100%; box-sizing:border-box;">
-                <div id="receiptOtherResults" style="margin-top:8px; max-height:220px; overflow-y:auto;"></div>
+            <div id="receiptOtherPicker" style="display:none; margin-top:10px;">
+                <input type="text" id="receiptOtherSearch" class="category-search"
+                       placeholder="Search all categories or GL code…"
+                       oninput="renderReceiptOtherResults()" autocomplete="off">
+                <div id="receiptOtherResults" class="category-grid" style="margin-top:10px;"></div>
             </div>
             <div id="receiptSelectedChip" style="display:none; margin-top:12px; font-size:14px; color:var(--text);"></div>
         </div>
@@ -2548,18 +2562,18 @@
             : receiptOtherCategories;
         box.innerHTML = '';
         if (!matches.length) {
-            box.innerHTML = '<div style="color:var(--text-light); font-size:14px; padding:6px 0;">No matches.</div>';
+            box.innerHTML = '<div style="grid-column:1/-1; color:var(--text-light); font-size:14px; padding:6px 2px;">No matches.</div>';
             return;
         }
+        const selGl = selectedReceiptCategory ? selectedReceiptCategory.glCode : null;
         matches.forEach(c => {
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = 'btn btn-outline';
-            row.style.cssText = 'display:flex; align-items:center; gap:8px; width:100%; justify-content:flex-start; margin:4px 0; text-align:left;';
-            row.onclick = () => selectReceiptCategory(c);
-            row.innerHTML = `<span>${c.icon || '🏷️'}</span><span>${c.label}</span>` +
-                `<span style="margin-left:auto; color:var(--text-light); font-size:13px;">${c.glCode}</span>`;
-            box.appendChild(row);
+            const tile = document.createElement('button');
+            tile.type = 'button';
+            tile.className = 'category-tile' + (c.glCode === selGl ? ' selected' : '');
+            tile.onclick = () => selectReceiptCategory(c);
+            tile.innerHTML = `<span class="tile-icon">${c.icon || '🏷️'}</span>` +
+                `<span>${c.label}</span><span class="tile-gl">${c.glCode}</span>`;
+            box.appendChild(tile);
         });
     }
 
