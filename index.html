@@ -2554,13 +2554,15 @@
     function renderReceiptOtherResults() {
         const q = document.getElementById('receiptOtherSearch').value.trim().toLowerCase();
         const box = document.getElementById('receiptOtherResults');
-        // Search the full set (tiles + search-only) so every GL code is reachable;
-        // with no query, show the search-only categories as the default list.
-        const all = receiptCategories.concat(receiptOtherCategories);
-        const matches = q
-            ? all.filter(c => c.label.toLowerCase().includes(q) || c.glCode.toLowerCase().includes(q))
-            : receiptOtherCategories;
         box.innerHTML = '';
+        // Empty until the user types — keeps the picker quiet on open.
+        if (!q) {
+            box.innerHTML = '<div style="grid-column:1/-1; color:var(--text-light); font-size:14px; padding:6px 2px;">Start typing to search categories…</div>';
+            return;
+        }
+        // Search the full set (tiles + search-only) so every GL code is reachable.
+        const all = receiptCategories.concat(receiptOtherCategories);
+        const matches = all.filter(c => c.label.toLowerCase().includes(q) || c.glCode.toLowerCase().includes(q));
         if (!matches.length) {
             box.innerHTML = '<div style="grid-column:1/-1; color:var(--text-light); font-size:14px; padding:6px 2px;">No matches.</div>';
             return;
