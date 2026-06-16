@@ -141,6 +141,11 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-16
+- **Receipt categories now sourced from the real CMD chart of accounts.** Replaced the placeholder fallback GL codes (5210 Fuel, 5220 Meals…, which don't exist in the books) with the 6 active tiles seeded into `Receipt Category Quick Picks` (5576 Travel, 5488 Hospitality, 5529 Office Supplies, 5526 IT Equipment, 5527 Licenses & Subscriptions, 5025 Auto Repair).
+- **Built the spec §7.2 "Other…" searchable picker.** The category loader no longer drops `IsActive=false` rows — active rows render as quick-pick tiles, inactive rows are reachable via an "Other…" tile that opens a search box (filters all categories by label or GL code). Category selection refactored from list-index to the selected object so an "Other…" pick is robust; a "Selected: …" chip confirms the choice. The 12 search-only CMD codes (Office Equipment, Staff Training, Intl Travel, Legal, Postage, Building Repair, Workers Retreat, Assembly, Dexcom, Licensing/Nominating/Ordaining committees) are now selectable. Emmanuel curates tile-vs-search by flipping `IsActive`/`SortOrder` in SharePoint — no code change.
+- **Receipt role routing (spec §4) foundation.** On login the app reads the user's Entra group membership (`/me/memberOf`) and resolves submitter/accountant/approver roles against the receipt security groups (created 2026-06-16). The "Submit a Receipt" entry is gated on `ReceiptSubmitters` membership (fails open if membership is unreadable). Desktop reconciliation/approval dashboard routing is stubbed pending those Phase 3/4 views.
+
 ### 2026-06-14 (evening)
 - Added a **Tip** field to the receipt verify form (relabeled the last field "Total paid"), populated from OCR. Submit sends `TipAmount` only when a tip is present and **self-heals** if the `Receipt Claims` list lacks a `TipAmount` column (drops it, flags the item, still saves) — so the capture flow doesn't depend on a manual SharePoint change. Pairs with the receipt-processor tip/tax-inclusive OCR fixes.
 

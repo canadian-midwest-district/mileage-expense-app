@@ -780,6 +780,12 @@
         receiptCategoryList: 'Receipt Category Quick Picks',
         // OCR endpoint (receipt-processor Vercel project, deployed 2026-06-14).
         receiptOcrUrl: 'https://receipt-processor-eight.vercel.app/api/process-receipt',
+        // Entra security groups for receipt role routing (created 2026-06-16, spec §4).
+        receiptGroups: {
+            submitters: '8765a926-e6c4-4349-be0a-287ab0c137fa',
+            accountant: '70729fe4-bcdf-4e07-8ba1-9d7f229df6cd',
+            approver:   '97ec28f0-fc09-4660-98f5-942dd6831f0b',
+        },
     };
 
     const DISTRICT_VEHICLES = [
@@ -793,15 +799,17 @@
     const RECEIPT_PROVINCES = ['SK', 'MB', 'AB', 'BC', 'ON', 'QC', 'NB', 'NS', 'NL', 'PE'];
 
     // Fallback quick-picks used ONLY when the `Receipt Category Quick Picks`
-    // SharePoint list can't be read yet (it's maintained by Emmanuel; until
-    // it exists the capture flow still works). GLCode is the Sage account.
+    // SharePoint list can't be read (it's the source of truth, maintained by
+    // Emmanuel). These mirror the 6 active tiles seeded 2026-06-16 from the
+    // real CMD chart of accounts — keep them in sync if the list's active
+    // tiles change. GLCode is the Sage 50 account.
     const DEFAULT_RECEIPT_CATEGORIES = [
-        { label: 'Fuel',          glCode: '5210', icon: '⛽' },
-        { label: 'Meals',         glCode: '5220', icon: '🍽️' },
-        { label: 'Lodging',       glCode: '5230', icon: '🏨' },
-        { label: 'Office',        glCode: '5240', icon: '📎' },
-        { label: 'Supplies',      glCode: '5250', icon: '📦' },
-        { label: 'Parking',       glCode: '5260', icon: '🅿️' },
+        { label: 'Travel',                   glCode: '5576', icon: '🚗' },
+        { label: 'Hospitality',              glCode: '5488', icon: '🍽️' },
+        { label: 'Office Supplies',          glCode: '5529', icon: '📦' },
+        { label: 'IT Equipment',             glCode: '5526', icon: '💻' },
+        { label: 'Licenses & Subscriptions', glCode: '5527', icon: '🔑' },
+        { label: 'Auto Repair',              glCode: '5025', icon: '🔧' },
     ];
 </script>
 
@@ -848,7 +856,7 @@
             <div class="choice-title">Personal Vehicle (No Claim)</div>
             <div class="choice-desc">Log a trip for the record — no mileage claim</div>
         </button>
-        <button class="btn-vehicle-choice" onclick="chooseSubmitReceipt()">
+        <button id="submitReceiptTile" class="btn-vehicle-choice" onclick="chooseSubmitReceipt()">
             <div class="choice-title">Submit a Receipt</div>
             <div class="choice-desc">Snap a receipt — taxes are read automatically</div>
         </button>
@@ -1189,6 +1197,14 @@
             <div class="category-grid" id="receiptCategoryGrid">
                 <div style="grid-column:1/-1; color:var(--text-light); font-size:14px;">Loading categories…</div>
             </div>
+            <!-- "Other…" searchable picker for the non-tile (search-only) GL codes -->
+            <div id="receiptOtherPicker" style="display:none; margin-top:12px;">
+                <input type="text" id="receiptOtherSearch" placeholder="Search all categories or GL code…"
+                       oninput="renderReceiptOtherResults()" autocomplete="off"
+                       style="width:100%; box-sizing:border-box;">
+                <div id="receiptOtherResults" style="margin-top:8px; max-height:220px; overflow-y:auto;"></div>
+            </div>
+            <div id="receiptSelectedChip" style="display:none; margin-top:12px; font-size:14px; color:var(--text);"></div>
         </div>
 
         <div class="card">
@@ -1323,6 +1339,49 @@
         document.getElementById('userBar').style.display = 'flex';
         document.getElementById('userName').textContent = currentUser.name || currentUser.username;
         document.getElementById('vehicleSelectScreen').style.display = 'flex';
+
+        // Receipt role detection (spec §4). Non-blocking and fails OPEN — if we
+        // can't read group membership we leave the receipt entry visible rather
+        // than lock a legitimate submitter out.
+        applyReceiptRoles();
+    }
+
+    // Receipt roles, resolved from Entra security-group membership (spec §4).
+    // null = not yet determined / unreadable.
+    let receiptRoles = { submitter: null, accountant: null, approver: null };
+
+    async function applyReceiptRoles() {
+        try {
+            const r = await fetch(
+                'https://graph.microsoft.com/v1.0/me/memberOf?$select=id&$top=200',
+                { headers: { 'Authorization': `Bearer ${accessToken}` } });
+            if (!r.ok) throw new Error('memberOf HTTP ' + r.status);
+            const d = await r.json();
+            const ids = new Set((d.value || []).map(g => g.id));
+            const G = CONFIG.receiptGroups;
+            receiptRoles = {
+                submitter: ids.has(G.submitters),
+                accountant: ids.has(G.accountant),
+                approver: ids.has(G.approver),
+            };
+        } catch (err) {
+            console.warn('Receipt roles: membership unreadable, failing open —', err.message);
+            receiptRoles = { submitter: null, accountant: null, approver: null };
+        }
+        routeReceiptViews();
+    }
+
+    // Apply role-based view routing (spec §4). Today only the mobile capture
+    // (submitter) view exists in this app; Emmanuel's reconciliation and
+    // Bernie's approval dashboards are Phase 3/4 and live elsewhere. Until those
+    // ship, routing == gate the receipt-capture entry on submitter membership.
+    function routeReceiptViews() {
+        const tile = document.getElementById('submitReceiptTile');
+        if (!tile) return;
+        // Hide only when we positively know the user is NOT a submitter.
+        tile.style.display = (receiptRoles.submitter === false) ? 'none' : '';
+        // TODO (Phase 3/4): when the desktop reconciliation/approval dashboards
+        // exist, route by receiptRoles.accountant / .approver + screen width here.
     }
 
     function signOut() {
@@ -2239,8 +2298,9 @@
 
     // ========== RECEIPT CAPTURE (View A) ==========
     let receiptImageBlob = null;       // compressed JPEG ready for OCR + upload
-    let receiptCategories = [];        // loaded quick-picks
-    let selectedReceiptCategoryIdx = null;
+    let receiptCategories = [];        // active quick-pick tiles
+    let receiptOtherCategories = [];   // search-only (IsActive=false) categories — spec §7.2 "Other…"
+    let selectedReceiptCategory = null; // chosen { label, glCode, icon }
 
     // Small Graph helpers, used by the receipt flow (mirrors the inline
     // pattern the claim/district paths use).
@@ -2281,7 +2341,9 @@
 
     function resetReceiptCapture() {
         receiptImageBlob = null;
-        selectedReceiptCategoryIdx = null;
+        selectedReceiptCategory = null;
+        document.getElementById('receiptOtherPicker').style.display = 'none';
+        document.getElementById('receiptSelectedChip').style.display = 'none';
         document.getElementById('receiptPhoto').value = '';
         document.getElementById('receiptReviewBanner').style.display = 'none';
         ['rcVendor', 'rcDate', 'rcSubtotal', 'rcGst', 'rcProvincialTax', 'rcTip', 'rcTotal', 'rcDescription']
@@ -2405,22 +2467,28 @@
                 const d = await res.json();
                 (d.value || []).forEach(it => {
                     const f = it.fields || {};
-                    if (f.IsActive === false) return;
                     const label = f.Title || f.Label;
                     const glCode = f.GLCode || f.GlCode;
                     if (label && glCode) {
-                        rows.push({ label, glCode: String(glCode), icon: f.Icon || '🏷️', sort: f.SortOrder || 0 });
+                        // Keep ALL rows — IsActive only decides tile vs. search-only,
+                        // not visibility. Dropping inactive rows would make the
+                        // "Other…" categories unreachable (spec §7.2).
+                        rows.push({ label, glCode: String(glCode), icon: f.Icon || '🏷️',
+                                    sort: f.SortOrder || 0, active: f.IsActive !== false });
                     }
                 });
                 url = d['@odata.nextLink'] || null;
             }
             rows.sort((a, b) => (a.sort - b.sort) || a.label.localeCompare(b.label));
-            receiptCategories = rows.length ? rows : DEFAULT_RECEIPT_CATEGORIES.slice();
+            const active = rows.filter(r => r.active);
+            receiptCategories = active.length ? active : DEFAULT_RECEIPT_CATEGORIES.slice();
+            receiptOtherCategories = rows.filter(r => !r.active);
         } catch (err) {
             // List not created yet (Phase 1 infra) or unreadable — fall back so
             // the capture flow stays testable.
             console.warn('Receipt categories: using fallback —', err.message);
             receiptCategories = DEFAULT_RECEIPT_CATEGORIES.slice();
+            receiptOtherCategories = [];
         }
         renderReceiptCategories();
     }
@@ -2428,19 +2496,79 @@
     function renderReceiptCategories() {
         const grid = document.getElementById('receiptCategoryGrid');
         grid.innerHTML = '';
-        receiptCategories.forEach((c, i) => {
+        const selGl = selectedReceiptCategory ? selectedReceiptCategory.glCode : null;
+        const selInTiles = selGl && receiptCategories.some(r => r.glCode === selGl);
+        receiptCategories.forEach((c) => {
             const tile = document.createElement('button');
             tile.type = 'button';
-            tile.className = 'category-tile' + (i === selectedReceiptCategoryIdx ? ' selected' : '');
-            tile.onclick = () => selectReceiptCategory(i);
+            tile.className = 'category-tile' + (c.glCode === selGl ? ' selected' : '');
+            tile.onclick = () => selectReceiptCategory(c);
             tile.innerHTML = `<span class="tile-icon">${c.icon || '🏷️'}</span><span>${c.label}</span>`;
             grid.appendChild(tile);
         });
+        // "Other…" tile opens the searchable picker for the non-tile GL codes.
+        if (receiptOtherCategories.length) {
+            const other = document.createElement('button');
+            other.type = 'button';
+            other.className = 'category-tile' + ((selGl && !selInTiles) ? ' selected' : '');
+            other.onclick = toggleReceiptOtherPicker;
+            other.innerHTML = `<span class="tile-icon">🔎</span><span>Other…</span>`;
+            grid.appendChild(other);
+        }
+        renderReceiptSelectedChip();
     }
 
-    function selectReceiptCategory(idx) {
-        selectedReceiptCategoryIdx = idx;
+    function selectReceiptCategory(cat) {
+        selectedReceiptCategory = cat;
+        document.getElementById('receiptOtherPicker').style.display = 'none';
         renderReceiptCategories();
+    }
+
+    function toggleReceiptOtherPicker() {
+        const picker = document.getElementById('receiptOtherPicker');
+        const open = picker.style.display === 'block';
+        picker.style.display = open ? 'none' : 'block';
+        if (!open) {
+            const search = document.getElementById('receiptOtherSearch');
+            search.value = '';
+            renderReceiptOtherResults();
+            search.focus();
+        }
+        renderReceiptCategories();
+    }
+
+    function renderReceiptOtherResults() {
+        const q = document.getElementById('receiptOtherSearch').value.trim().toLowerCase();
+        const box = document.getElementById('receiptOtherResults');
+        // Search the full set (tiles + search-only) so every GL code is reachable;
+        // with no query, show the search-only categories as the default list.
+        const all = receiptCategories.concat(receiptOtherCategories);
+        const matches = q
+            ? all.filter(c => c.label.toLowerCase().includes(q) || c.glCode.toLowerCase().includes(q))
+            : receiptOtherCategories;
+        box.innerHTML = '';
+        if (!matches.length) {
+            box.innerHTML = '<div style="color:var(--text-light); font-size:14px; padding:6px 0;">No matches.</div>';
+            return;
+        }
+        matches.forEach(c => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'btn btn-outline';
+            row.style.cssText = 'display:flex; align-items:center; gap:8px; width:100%; justify-content:flex-start; margin:4px 0; text-align:left;';
+            row.onclick = () => selectReceiptCategory(c);
+            row.innerHTML = `<span>${c.icon || '🏷️'}</span><span>${c.label}</span>` +
+                `<span style="margin-left:auto; color:var(--text-light); font-size:13px;">${c.glCode}</span>`;
+            box.appendChild(row);
+        });
+    }
+
+    function renderReceiptSelectedChip() {
+        const chip = document.getElementById('receiptSelectedChip');
+        if (!selectedReceiptCategory) { chip.style.display = 'none'; return; }
+        chip.style.display = 'block';
+        chip.innerHTML = `Selected: <strong>${selectedReceiptCategory.icon || '🏷️'} ${selectedReceiptCategory.label}</strong> ` +
+            `<span style="color:var(--text-light);">(${selectedReceiptCategory.glCode})</span>`;
     }
 
     // ReceiptRef = REC-YYYY-NNNN, sequential per year, zero-padded to 4.
@@ -2483,10 +2611,10 @@
         if (!vendor) { showToast('Please enter the vendor.'); return; }
         if (!date) { showToast('Please enter the date.'); return; }
         if (isNaN(total) || total <= 0) { showToast('Please enter the total amount.'); return; }
-        if (selectedReceiptCategoryIdx === null) { showToast('Please pick a category.'); return; }
+        if (!selectedReceiptCategory) { showToast('Please pick a category.'); return; }
         if (!receiptImageBlob) { showToast('Receipt photo is missing — please retake.'); return; }
 
-        const cat = receiptCategories[selectedReceiptCategoryIdx];
+        const cat = selectedReceiptCategory;
         const submittedBy = currentUser.name || currentUser.username;
         const num = v => isNaN(v) ? 0 : Math.round(v * 100) / 100;
 
