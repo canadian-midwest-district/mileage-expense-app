@@ -766,6 +766,36 @@
             color: var(--text);
         }
         .category-search:focus { outline: none; border-color: var(--primary); }
+
+        /* ===== View B: Reconciliation Dashboard (desktop) ===== */
+        .recon-dashboard { display:none; max-width:1400px; margin:0 auto; padding:16px 20px 48px; }
+        .recon-topbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+        .recon-topbar h2 { margin:0; color:var(--primary); font-size:20px; }
+        .recon-count { font-size:13px; color:var(--text-light); margin-right:10px; }
+        .recon-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+        .recon-tab { padding:8px 14px; border:1px solid var(--border); border-radius:999px; background:#fafafa; cursor:pointer; font-family:inherit; font-size:14px; font-weight:600; color:var(--text); }
+        .recon-tab.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+        .recon-filters { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
+        .recon-filters .field { margin:0; }
+        .recon-filters label { display:block; font-size:12px; color:var(--text-light); margin-bottom:2px; }
+        .recon-filters input, .recon-filters select { padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-family:inherit; font-size:14px; color:var(--text); }
+        .recon-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:10px; background:#fff; }
+        table.recon-table { width:100%; border-collapse:collapse; font-size:13px; white-space:nowrap; }
+        table.recon-table th, table.recon-table td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; }
+        table.recon-table th { background:#f7f7f7; position:sticky; top:0; cursor:pointer; user-select:none; font-weight:700; z-index:1; }
+        table.recon-table th .arrow { color:var(--primary); font-size:11px; }
+        table.recon-table tbody tr:hover { background:#f0f7fd; }
+        table.recon-table td.num, table.recon-table th.num { text-align:right; }
+        .recon-empty { padding:24px; text-align:center; color:var(--text-light); }
+        .status-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; text-transform:capitalize; }
+        .status-submitted { background:#e7f1fb; color:#1F4E78; }
+        .status-reconciled { background:#e7f6ec; color:#107c10; }
+        .status-approved { background:#eef7e7; color:#5a7c10; }
+        .status-exported { background:#eeeeee; color:#555; }
+        .status-returned { background:#fde7e7; color:#a11111; }
+        .flag-cell { color:#a11111; font-weight:600; white-space:normal; }
+        .recon-prov-select { padding:2px 4px; border:1px solid var(--border); border-radius:4px; font-family:inherit; font-size:12px; }
+        .btn-sm { padding:6px 12px; font-size:13px; }
     </style>
 </head>
 <body>
@@ -1242,6 +1272,37 @@
     <button class="btn btn-primary" id="successBackBtn" onclick="handleSuccessBack()">Submit Another</button>
 </div>
 
+<!-- ===== View B: Emmanuel's Reconciliation Dashboard ===== -->
+<div id="reconciliationDashboard" class="recon-dashboard">
+    <div class="recon-topbar">
+        <h2>Receipt Reconciliation</h2>
+        <div>
+            <span class="recon-count" id="reconCount"></span>
+            <button class="btn btn-outline btn-sm" onclick="loadReconciliation()">&#8635; Refresh</button>
+            <span class="sign-out" onclick="signOut()" style="margin-left:12px;">Sign out</span>
+        </div>
+    </div>
+    <div class="recon-tabs" id="reconTabs">
+        <button class="recon-tab active" data-status="all" onclick="setReconTab('all')">All</button>
+        <button class="recon-tab" data-status="submitted" onclick="setReconTab('submitted')">Submitted</button>
+        <button class="recon-tab" data-status="reconciled" onclick="setReconTab('reconciled')">Reconciled</button>
+        <button class="recon-tab" data-status="flagged" onclick="setReconTab('flagged')">Flagged</button>
+    </div>
+    <div class="recon-filters">
+        <div class="field"><label>From</label><input type="date" id="reconFrom" onchange="renderReconciliation()"></div>
+        <div class="field"><label>To</label><input type="date" id="reconTo" onchange="renderReconciliation()"></div>
+        <div class="field"><label>Submitter</label><select id="reconSubmitter" onchange="renderReconciliation()"><option value="">All</option></select></div>
+        <div class="field"><label>Category</label><select id="reconCategory" onchange="renderReconciliation()"><option value="">All</option></select></div>
+        <div class="field"><button class="btn btn-outline btn-sm" onclick="clearReconFilters()">Clear filters</button></div>
+    </div>
+    <div class="recon-table-wrap">
+        <table class="recon-table" id="reconTable">
+            <thead id="reconHead"></thead>
+            <tbody id="reconBody"></tbody>
+        </table>
+    </div>
+</div>
+
 <!-- Contact Logging Prompt Modal -->
 <div id="contactLogModal" class="modal-overlay">
     <div class="modal-content">
@@ -1391,11 +1452,14 @@
     // ship, routing == gate the receipt-capture entry on submitter membership.
     function routeReceiptViews() {
         const tile = document.getElementById('submitReceiptTile');
-        if (!tile) return;
-        // Hide only when we positively know the user is NOT a submitter.
-        tile.style.display = (receiptRoles.submitter === false) ? 'none' : '';
-        // TODO (Phase 3/4): when the desktop reconciliation/approval dashboards
-        // exist, route by receiptRoles.accountant / .approver + screen width here.
+        // Hide the capture entry only when we positively know the user is NOT a submitter.
+        if (tile) tile.style.display = (receiptRoles.submitter === false) ? 'none' : '';
+        // Desktop accountant (Emmanuel) → reconciliation dashboard (spec §4 / §8).
+        // Phase 4 will add the approver (Bernie) → approval dashboard branch here.
+        const isDesktop = window.matchMedia('(min-width: 1024px)').matches;
+        if (receiptRoles.accountant === true && isDesktop) {
+            openReconciliation();
+        }
     }
 
     function signOut() {
@@ -1409,6 +1473,7 @@
         document.getElementById('districtForm').style.display = 'none';
         document.getElementById('receiptCaptureView').style.display = 'none';
         document.getElementById('successScreen').style.display = 'none';
+        document.getElementById('reconciliationDashboard').style.display = 'none';
         allChurches = [];
         selectedChurches = new Set();
         distPreviousOdometer = null;
@@ -2754,6 +2819,174 @@
         } finally {
             btn.disabled = false;
             btn.innerHTML = 'Submit Receipt';
+        }
+    }
+
+    // ========== RECONCILIATION DASHBOARD (View B — Emmanuel) ==========
+    let reconAll = [];                               // [{id, f:fields}]
+    let reconStatus = 'all';
+    let reconSort = { key: 'ReceiptDate', dir: 1 };
+    const RECON_COLS = [
+        { key:'Status', label:'Status' }, { key:'ReceiptRef', label:'Ref' },
+        { key:'ReceiptDate', label:'Date' }, { key:'Vendor', label:'Vendor' },
+        { key:'Province', label:'Prov' }, { key:'SubmittedBy', label:'Submitter' },
+        { key:'CategoryLabel', label:'Category' }, { key:'Subtotal', label:'Subtotal', num:true },
+        { key:'GSTAmount', label:'GST', num:true }, { key:'ProvincialTax', label:'Prov Tax', num:true },
+        { key:'TipAmount', label:'Tip', num:true }, { key:'TotalAmount', label:'Total', num:true },
+        { key:'Flag', label:'Flag' },
+    ];
+    // Provincial rate by province for inline recompute; GST is always 5% (spec §5.4).
+    const PROVINCE_PROV_RATE = { SK:0.06, MB:0.07, BC:0.07, AB:0.00, ON:0.08, NB:0.10, NS:0.10, NL:0.10, PE:0.10, QC:0.09975 };
+
+    function reconEsc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    function hideAllReceiptViews(){
+        ['vehicleSelectScreen','mainForm','districtForm','receiptCaptureView','successScreen','reconciliationDashboard']
+            .forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
+    }
+
+    async function openReconciliation(){
+        hideAllReceiptViews();
+        document.getElementById('reconciliationDashboard').style.display = 'block';
+        await loadReconciliation();
+    }
+
+    async function loadReconciliation(){
+        const body = document.getElementById('reconBody');
+        body.innerHTML = '<tr><td colspan="13" class="recon-empty">Loading…</td></tr>';
+        try {
+            await refreshAccessToken();
+            const site = await graphSite();
+            const listId = await graphListId(site.id, CONFIG.receiptClaimsList);
+            let url = `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items?$expand=fields&$top=200`;
+            const rows = [];
+            while (url) {
+                const res = await fetch(url, { headers:{ 'Authorization':`Bearer ${accessToken}`, 'Cache-Control':'no-cache' }, cache:'no-store' });
+                const d = await res.json();
+                (d.value||[]).forEach(it => rows.push({ id: it.id, f: it.fields||{} }));
+                url = d['@odata.nextLink'] || null;
+            }
+            reconAll = rows;
+            populateReconFilters();
+            renderReconciliation();
+        } catch (err) {
+            console.error(err);
+            body.innerHTML = `<tr><td colspan="13" class="recon-empty">Could not load receipts: ${reconEsc(err.message)}</td></tr>`;
+        }
+    }
+
+    function populateReconFilters(){
+        const subSel=document.getElementById('reconSubmitter'), catSel=document.getElementById('reconCategory');
+        const prevSub=subSel.value, prevCat=catSel.value;
+        const subs=[...new Set(reconAll.map(r=>r.f.SubmittedBy).filter(Boolean))].sort();
+        const cats=[...new Set(reconAll.map(r=>r.f.CategoryLabel).filter(Boolean))].sort();
+        subSel.innerHTML='<option value="">All</option>'+subs.map(s=>`<option>${reconEsc(s)}</option>`).join('');
+        catSel.innerHTML='<option value="">All</option>'+cats.map(c=>`<option>${reconEsc(c)}</option>`).join('');
+        subSel.value=prevSub; catSel.value=prevCat;
+    }
+
+    function setReconTab(s){
+        reconStatus=s;
+        document.querySelectorAll('#reconTabs .recon-tab').forEach(t=>t.classList.toggle('active', t.dataset.status===s));
+        renderReconciliation();
+    }
+    function setReconSort(key){
+        if(reconSort.key===key) reconSort.dir*=-1; else { reconSort.key=key; reconSort.dir=1; }
+        renderReconciliation();
+    }
+    function clearReconFilters(){
+        ['reconFrom','reconTo','reconSubmitter','reconCategory'].forEach(id=>document.getElementById(id).value='');
+        renderReconciliation();
+    }
+
+    function filteredRecon(){
+        const from=document.getElementById('reconFrom').value, to=document.getElementById('reconTo').value;
+        const sub=document.getElementById('reconSubmitter').value, cat=document.getElementById('reconCategory').value;
+        return reconAll.filter(r=>{
+            const f=r.f, st=(f.Status||'submitted').toLowerCase();
+            if(reconStatus==='flagged'){ if(!f.Flag) return false; }
+            else if(reconStatus!=='all'){ if(st!==reconStatus) return false; }
+            if(sub && f.SubmittedBy!==sub) return false;
+            if(cat && f.CategoryLabel!==cat) return false;
+            const d=(f.ReceiptDate||'').slice(0,10);
+            if(from && d && d<from) return false;
+            if(to && d && d>to) return false;
+            return true;
+        });
+    }
+
+    function renderReconciliation(){
+        const head=document.getElementById('reconHead'), body=document.getElementById('reconBody');
+        head.innerHTML='<tr>'+RECON_COLS.map(c=>{
+            const arrow = reconSort.key===c.key ? `<span class="arrow">${reconSort.dir>0?'▲':'▼'}</span>` : '';
+            return `<th class="${c.num?'num':''}" onclick="setReconSort('${c.key}')">${c.label} ${arrow}</th>`;
+        }).join('')+'</tr>';
+
+        const rows=filteredRecon();
+        const k=reconSort.key, dir=reconSort.dir, numeric=!!RECON_COLS.find(c=>c.key===k)?.num;
+        rows.sort((a,b)=>{
+            let va=a.f[k], vb=b.f[k];
+            if(numeric){ return ((parseFloat(va)||0)-(parseFloat(vb)||0))*dir; }
+            va=(va||'').toString().toLowerCase(); vb=(vb||'').toString().toLowerCase();
+            return va<vb?-dir:(va>vb?dir:0);
+        });
+
+        document.getElementById('reconCount').textContent = `${rows.length} receipt${rows.length===1?'':'s'}`;
+        if(!rows.length){ body.innerHTML='<tr><td colspan="13" class="recon-empty">No receipts match.</td></tr>'; return; }
+        const money=v=>{ const n=parseFloat(v); return isNaN(n)?'':'$'+n.toFixed(2); };
+        body.innerHTML=rows.map(r=>{
+            const f=r.f, st=(f.Status||'submitted').toLowerCase();
+            const provOpts=['',...RECEIPT_PROVINCES].map(p=>`<option value="${p}"${p===(f.Province||'')?' selected':''}>${p||'—'}</option>`).join('');
+            return `<tr>
+                <td><span class="status-badge status-${st}">${reconEsc(f.Status||'submitted')}</span></td>
+                <td>${reconEsc(f.ReceiptRef)}</td>
+                <td>${reconEsc((f.ReceiptDate||'').slice(0,10))}</td>
+                <td>${reconEsc(f.Vendor)}</td>
+                <td><select class="recon-prov-select" onchange="changeReconProvince('${r.id}', this.value)">${provOpts}</select></td>
+                <td>${reconEsc(f.SubmittedBy)}</td>
+                <td>${reconEsc(f.CategoryLabel)}</td>
+                <td class="num">${money(f.Subtotal)}</td>
+                <td class="num">${money(f.GSTAmount)}</td>
+                <td class="num">${money(f.ProvincialTax)}</td>
+                <td class="num">${money(f.TipAmount)}</td>
+                <td class="num">${money(f.TotalAmount)}</td>
+                <td class="flag-cell">${reconEsc(f.Flag)}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // Inline province correction recomputes the GST/provincial split from the
+    // tax-inclusive (total - tip) base, then persists it (spec §8.1).
+    async function changeReconProvince(id, province){
+        const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        const f=rec.f;
+        const total=parseFloat(f.TotalAmount)||0, tip=parseFloat(f.TipAmount)||0;
+        const taxable=Math.max(0, total-tip);
+        let subtotal, gst, prov;
+        if(!province){ subtotal=taxable; gst=0; prov=0; }
+        else {
+            const combined=0.05+(PROVINCE_PROV_RATE[province]||0);
+            subtotal=Math.round((taxable/(1+combined))*100)/100;
+            gst=Math.round(subtotal*0.05*100)/100;
+            prov=Math.round((taxable-subtotal-gst)*100)/100;
+        }
+        f.Province=province; f.Subtotal=subtotal; f.GSTAmount=gst; f.ProvincialTax=prov;
+        renderReconciliation();
+        try {
+            await refreshAccessToken();
+            const site=await graphSite();
+            const listId=await graphListId(site.id, CONFIG.receiptClaimsList);
+            const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items/${id}/fields`,{
+                method:'PATCH',
+                headers:{ 'Authorization':`Bearer ${accessToken}`, 'Content-Type':'application/json' },
+                body: JSON.stringify({ Province:province, Subtotal:subtotal, GSTAmount:gst, ProvincialTax:prov })
+            });
+            if(!res.ok) throw new Error('PATCH '+res.status);
+            showToast(`Updated ${f.ReceiptRef||'receipt'} → ${province||'(blank)'}`);
+        } catch(err){
+            console.error(err);
+            showToast('Could not save the province change — reloading.');
+            loadReconciliation();
         }
     }
 
