@@ -879,24 +879,24 @@
     ];
 </script>
 
-<div class="header">
+<div class="header" id="appHeader">
     <img src="cmd-logo.png" alt="Canadian Midwest District">
     <div>
-        <h1>Mileage & Expense Claim</h1>
+        <h1 id="appTitle">Mileage & Expense Claim</h1>
         <div class="subtitle">Canadian Midwest District</div>
     </div>
 </div>
 
 <!-- Login Screen -->
 <div id="loginScreen" class="login-screen">
-    <h2>Submit a Claim</h2>
+    <h2 id="loginHeading">Submit a Claim</h2>
 
-    <div style="background:#fff8e1; border:1px solid #f0c54a; border-radius:8px; padding:14px 16px; margin:8px 0 20px; text-align:left; max-width:340px;">
+    <div id="extNotice" style="background:#fff8e1; border:1px solid #f0c54a; border-radius:8px; padding:14px 16px; margin:8px 0 20px; text-align:left; max-width:340px;">
         <strong style="display:block; margin-bottom:6px; color:#7a5a00;">Ordaining Council &amp; DLC members:</strong>
         <span style="font-size:14px; color:#5a4400;">You do <strong>not</strong> have a CMD Microsoft account. Use the orange button below — do not click "Sign in with Microsoft".</span>
     </div>
 
-    <button class="btn btn-primary" onclick="startExternalSubmission()"
+    <button id="extSubmitBtn" class="btn btn-primary" onclick="startExternalSubmission()"
             style="background:#e67e22; border-color:#e67e22;">
         File a claim without signing in →
     </button>
@@ -1350,6 +1350,13 @@
     </div>
 </div>
 
+<!-- Console: not-authorized notice (expenses. host, non-accountant) -->
+<div id="consoleDenied" class="success-screen" style="display:none;">
+    <h2>Not authorized</h2>
+    <p>This is the receipt reconciliation console. Your account isn't set up for it. If you're submitting receipts, use the travel app instead.</p>
+    <button class="btn btn-outline" onclick="signOut()">Sign out</button>
+</div>
+
 <!-- Create Batch Modal (reconciliation dashboard) -->
 <div id="batchModal" class="modal-overlay">
     <div class="modal-content">
@@ -1476,12 +1483,27 @@
         document.getElementById('loginScreen').style.display = 'none';
         document.getElementById('userBar').style.display = 'flex';
         document.getElementById('userName').textContent = currentUser.name || currentUser.username;
-        document.getElementById('vehicleSelectScreen').style.display = 'flex';
+        // Capture host shows the vehicle/receipt hub; console host goes straight to the dashboard (via routeReceiptViews).
+        if (APP_MODE === 'capture') document.getElementById('vehicleSelectScreen').style.display = 'flex';
 
         // Receipt role detection (spec §4). Non-blocking and fails OPEN — if we
         // can't read group membership we leave the receipt entry visible rather
         // than lock a legitimate submitter out.
         applyReceiptRoles();
+    }
+
+    // Host-based mode: the accountant console is served from expenses.canadianmidwest.ca
+    // (a separate GitHub Pages repo with the same index.html). travel.* and anything
+    // else (localhost/preview) run the capture app. This is an obscurity layer on top
+    // of the ReceiptAccountant group gate, not a replacement for it.
+    const APP_MODE = (location.hostname.split('.')[0] === 'expenses') ? 'console' : 'capture';
+
+    // In console mode, relabel the chrome and strip the capture-only login extras.
+    function applyConsoleChrome(){
+        if (APP_MODE !== 'console') return;
+        const t=document.getElementById('appTitle'); if(t) t.textContent='Receipt Reconciliation';
+        const lh=document.getElementById('loginHeading'); if(lh) lh.textContent='Reconciliation Console — Staff Sign In';
+        ['extNotice','extSubmitBtn'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; });
     }
 
     // Receipt roles, resolved from Entra security-group membership (spec §4).
@@ -1514,18 +1536,23 @@
     // Bernie's approval dashboards are Phase 3/4 and live elsewhere. Until those
     // ship, routing == gate the receipt-capture entry on submitter membership.
     function routeReceiptViews() {
-        const tile = document.getElementById('submitReceiptTile');
-        // Hide the capture entry only when we positively know the user is NOT a submitter.
-        if (tile) tile.style.display = (receiptRoles.submitter === false) ? 'none' : '';
-        // Always-available reconciliation entry for accountants (fallback if auto-route is skipped).
-        const dashTile = document.getElementById('reconDashTile');
-        if (dashTile) dashTile.style.display = (receiptRoles.accountant === true) ? '' : 'none';
-        // Desktop accountant (Emmanuel) → straight to reconciliation dashboard (spec §4 / §8).
-        // Phase 4 will add the approver (Bernie) → approval dashboard branch here.
-        const isDesktop = window.matchMedia('(min-width: 1024px)').matches;
-        if (receiptRoles.accountant === true && isDesktop) {
-            openReconciliation();
+        if (APP_MODE === 'console') {
+            // Accountant console host (expenses.): dashboard only, no capture flows.
+            // Fail OPEN — deny only when we positively know the user is NOT an accountant.
+            if (receiptRoles.accountant === false) { showConsoleDenied(); }
+            else { openReconciliation(); }
+            return;
         }
+        // Capture host (travel.): capture/vehicle flows only — the dashboard lives on expenses.
+        const tile = document.getElementById('submitReceiptTile');
+        if (tile) tile.style.display = (receiptRoles.submitter === false) ? 'none' : '';
+        const dashTile = document.getElementById('reconDashTile');
+        if (dashTile) dashTile.style.display = 'none';
+    }
+
+    function showConsoleDenied(){
+        hideAllReceiptViews();
+        document.getElementById('consoleDenied').style.display = 'flex';
     }
 
     function signOut() {
@@ -1540,6 +1567,7 @@
         document.getElementById('receiptCaptureView').style.display = 'none';
         document.getElementById('successScreen').style.display = 'none';
         document.getElementById('reconciliationDashboard').style.display = 'none';
+        document.getElementById('consoleDenied').style.display = 'none';
         allChurches = [];
         selectedChurches = new Set();
         distPreviousOdometer = null;
@@ -2907,7 +2935,7 @@
     function reconEsc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
     function hideAllReceiptViews(){
-        ['vehicleSelectScreen','mainForm','districtForm','receiptCaptureView','successScreen','reconciliationDashboard']
+        ['vehicleSelectScreen','mainForm','districtForm','receiptCaptureView','successScreen','reconciliationDashboard','consoleDenied']
             .forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
     }
 
@@ -3386,6 +3414,7 @@
     }
 
     // Init
+    applyConsoleChrome();
     checkExistingSession();
 </script>
 
