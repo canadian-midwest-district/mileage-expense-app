@@ -813,6 +813,10 @@
         .recon-form input, .recon-form select, .recon-form textarea { padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-family:inherit; font-size:14px; color:var(--text); }
         .recon-form textarea { min-height:46px; resize:vertical; }
         .recon-form-actions { grid-column:1 / -1; display:flex; gap:10px; margin-top:4px; }
+        .recon-actionsbar { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+        .rebate-card { background:#f3f9f3; border:1px solid #cfe8cf; border-radius:8px; padding:8px 14px; font-size:14px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+        .rebate-card .rebate-title { font-weight:700; color:#107c10; }
+        .recon-action-btns { display:flex; gap:10px; flex-wrap:wrap; }
     </style>
 </head>
 <body>
@@ -838,6 +842,7 @@
 
         // Receipt Processing System (DEXT replacement)
         receiptClaimsList: 'Receipt Claims',
+        receiptBatchesList: 'Receipt Batches',
         receiptCategoryList: 'Receipt Category Quick Picks',
         // OCR endpoint (receipt-processor Vercel project, deployed 2026-06-14).
         receiptOcrUrl: 'https://receipt-processor-eight.vercel.app/api/process-receipt',
@@ -1316,6 +1321,18 @@
         <div class="field"><label>Category</label><select id="reconCategory" onchange="renderReconciliation()"><option value="">All</option></select></div>
         <div class="field"><button class="btn btn-outline btn-sm" onclick="clearReconFilters()">Clear filters</button></div>
     </div>
+    <div class="recon-actionsbar">
+        <div class="rebate-card">
+            <span class="rebate-title">PSB GST rebate (current view)</span>
+            <span>Total GST: <b id="rebateGst">$0.00</b></span>
+            <span>50% rebate: <b id="rebateAmt">$0.00</b></span>
+            <button class="btn btn-outline btn-sm" onclick="exportRC4034()">Export RC4034 CSV</button>
+        </div>
+        <div class="recon-action-btns">
+            <button class="btn btn-primary btn-sm" onclick="openBatchModal()">Create Batch for Approval</button>
+            <button class="btn btn-outline btn-sm" onclick="downloadImp()">Download Sage Import (.IMP)</button>
+        </div>
+    </div>
     <div class="recon-bulkbar" id="reconBulkBar">
         <span class="sel-count" id="reconSelCount">0 selected</span>
         <label>Set category:
@@ -1330,6 +1347,22 @@
             <thead id="reconHead"></thead>
             <tbody id="reconBody"></tbody>
         </table>
+    </div>
+</div>
+
+<!-- Create Batch Modal (reconciliation dashboard) -->
+<div id="batchModal" class="modal-overlay">
+    <div class="modal-content">
+        <h3>Create Batch for Approval</h3>
+        <p id="batchSummary"></p>
+        <div class="field" style="margin-bottom:12px;">
+            <label>Notes for the approver (optional)</label>
+            <textarea id="batchNotes" placeholder="Anything Bernie should know about this batch…"></textarea>
+        </div>
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="closeBatchModal()">Cancel</button>
+            <button class="btn btn-primary" id="batchCreateBtn" onclick="createBatch()">Create batch</button>
+        </div>
     </div>
 </div>
 
@@ -2969,6 +3002,10 @@
         });
 
         document.getElementById('reconCount').textContent = `${rows.length} receipt${rows.length===1?'':'s'}`;
+        const totGst = rows.reduce((a,r)=>a+(parseFloat(r.f.GSTAmount)||0),0);
+        const gEl=document.getElementById('rebateGst'), aEl=document.getElementById('rebateAmt');
+        if(gEl) gEl.textContent='$'+totGst.toFixed(2);
+        if(aEl) aEl.textContent='$'+(totGst*0.5).toFixed(2);
         if(!rows.length){ body.innerHTML=`<tr><td colspan="${COLSPAN}" class="recon-empty">No receipts match.</td></tr>`; updateBulkBar(); return; }
         const money=v=>{ const n=parseFloat(v); return isNaN(n)?'':'$'+n.toFixed(2); };
         body.innerHTML=rows.map(r=>{
@@ -3212,6 +3249,140 @@
             showToast(`${rec.f.ReceiptRef||'Receipt'} reconciled.`);
             renderReconciliation();
         }catch(e){ console.error(e); showToast('Could not reconcile — reloading.'); loadReconciliation(); }
+    }
+
+    // ---- Increment 3: batch creation, .IMP export, PSB rebate ----
+    function downloadBlob(text, filename, type){
+        const u=URL.createObjectURL(new Blob([text],{type}));
+        const a=document.createElement('a'); a.href=u; a.download=filename;
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u);
+    }
+
+    // The selection if any rows are checked, otherwise the current filtered view.
+    function reconWorkingSet(){
+        return reconSelected.size ? reconAll.filter(r=>reconSelected.has(r.id)) : filteredRecon();
+    }
+    // Batch-eligible = reconciled and not already in a batch.
+    function batchEligible(){
+        return reconWorkingSet().filter(r => (r.f.Status||'').toLowerCase()==='reconciled' && !r.f.BatchRef);
+    }
+
+    function exportRC4034(){
+        const recs=filteredRecon();
+        if(!recs.length){ showToast('Nothing to export in the current view.'); return; }
+        const rows=[['Date','Vendor','Receipt Ref','GST']].concat(recs.map(r=>[
+            (r.f.ReceiptDate||'').slice(0,10), (r.f.Vendor||'').replace(/"/g,"'"),
+            r.f.ReceiptRef||'', (parseFloat(r.f.GSTAmount)||0).toFixed(2) ]));
+        const csv=rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('\r\n');
+        downloadBlob(csv, `RC4034-GST-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv');
+        showToast('RC4034 GST CSV downloaded.');
+    }
+
+    // ---- Batch creation (spec §8.4) ----
+    function openBatchModal(){
+        const recs=batchEligible();
+        const el=document.getElementById('batchSummary'), btn=document.getElementById('batchCreateBtn');
+        if(!recs.length){
+            el.innerHTML='No eligible receipts. A batch includes <b>reconciled</b> receipts that aren’t already in a batch — select some (or mark receipts reconciled) first.';
+            btn.disabled=true;
+        } else {
+            const t=recs.reduce((a,r)=>{a.gst+=+r.f.GSTAmount||0;a.tot+=+r.f.TotalAmount||0;a.flag+=r.f.Flag?1:0;return a;},{gst:0,tot:0,flag:0});
+            el.innerHTML=`<b>${recs.length}</b> receipt(s) · Total <b>$${t.tot.toFixed(2)}</b> · GST $${t.gst.toFixed(2)} · ${t.flag} flagged`;
+            btn.disabled=false;
+        }
+        document.getElementById('batchModal').classList.add('active');
+    }
+    function closeBatchModal(){ document.getElementById('batchModal').classList.remove('active'); }
+
+    async function nextBatchRef(siteId, listId){
+        const year=new Date().getFullYear(), prefix=`BATCH-${year}-`;
+        let max=0, url=`https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`;
+        while(url){
+            const res=await fetch(url,{headers:{'Authorization':`Bearer ${accessToken}`,'Cache-Control':'no-cache'},cache:'no-store'});
+            const d=await res.json();
+            (d.value||[]).forEach(it=>{ const ref=(it.fields||{}).BatchRef||''; if(ref.startsWith(prefix)){ const num=parseInt(ref.slice(prefix.length),10); if(!isNaN(num)&&num>max) max=num; } });
+            url=d['@odata.nextLink']||null;
+        }
+        return prefix+String(max+1).padStart(2,'0');
+    }
+
+    async function createBatch(){
+        const recs=batchEligible(); if(!recs.length) return;
+        const btn=document.getElementById('batchCreateBtn'); btn.disabled=true; btn.textContent='Creating…';
+        try{
+            await refreshAccessToken();
+            const site=await graphSite();
+            const batchListId=await graphListId(site.id, CONFIG.receiptBatchesList);
+            const ref=await nextBatchRef(site.id, batchListId);
+            const dates=recs.map(r=>(r.f.ReceiptDate||'').slice(0,10)).filter(Boolean).sort();
+            const r2=x=>Math.round(x*100)/100;
+            const t=recs.reduce((a,r)=>{a.sub+=+r.f.Subtotal||0;a.gst+=+r.f.GSTAmount||0;a.prov+=+r.f.ProvincialTax||0;a.tot+=+r.f.TotalAmount||0;a.flag+=r.f.Flag?1:0;return a;},{sub:0,gst:0,prov:0,tot:0,flag:0});
+            const who=(currentUser&&(currentUser.name||currentUser.username))||'', now=new Date().toISOString();
+            const fields={ Title:ref, BatchRef:ref,
+                PeriodStart: dates[0]?dates[0]+'T12:00:00-06:00':null,
+                PeriodEnd: dates.length?dates[dates.length-1]+'T12:00:00-06:00':null,
+                TotalSubtotal:r2(t.sub), TotalGST:r2(t.gst), TotalProvincialTax:r2(t.prov), TotalAmount:r2(t.tot),
+                ReceiptCount:recs.length, FlagCount:t.flag,
+                AccountantNotes:document.getElementById('batchNotes').value.trim(),
+                PreparedBy:who, PreparedAt:now, Status:'pending_approval' };
+            const cr=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${batchListId}/items`,{
+                method:'POST', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':'application/json'},
+                body:JSON.stringify({fields}) });
+            if(!cr.ok) throw new Error('batch create '+cr.status);
+            for(const r of recs){ await reconPatch(r.id, { BatchRef:ref }); const rec=reconAll.find(x=>x.id===r.id); if(rec) rec.f.BatchRef=ref; }
+            document.getElementById('batchNotes').value='';
+            showToast(`Created ${ref} with ${recs.length} receipt(s).`);
+            closeBatchModal(); reconSelected.clear(); renderReconciliation();
+        }catch(e){ console.error(e); showToast('Batch creation failed — '+e.message); btn.disabled=false; btn.textContent='Create batch'; }
+    }
+
+    // ---- Sage 50 General Journal .IMP export (spec §5.4 posting model) ----
+    // DRAFT format — the two-debit posting (accounts + amounts) is confirmed
+    // (Emmanuel's J674); the exact Sage 50 CA GeneralLedger block layout must be
+    // verified by importing into a TEST company. Keep the template here isolated
+    // so it's a one-spot fix once the test import confirms the syntax.
+    function cardAccountFor(name){
+        const n=(name||'').toLowerCase();
+        if(/keith|(^|\s)bob(\s|$)/.test(n)) return '2071';
+        if(/smith|chris/.test(n)) return '2072';
+        if(/enns|richard/.test(n)) return '2073';
+        if(/walle|bernie/.test(n)) return '2076';
+        return '';
+    }
+    function impDate(iso){ const p=(iso||'').slice(0,10).split('-'); return p.length===3?`${p[1]}-${p[2]}-${p[0]}`:''; } // MM-DD-YYYY
+
+    function buildImp(recs){
+        const warnings=[];
+        let out='<Version>\r\n"32101","1"\r\n</Version>\r\n';
+        recs.forEach(r=>{
+            const f=r.f;
+            const gst=Math.round((parseFloat(f.GSTAmount)||0)*100)/100;
+            const recover=Math.round(gst*0.5*100)/100;
+            const sub=parseFloat(f.Subtotal)||0, prov=parseFloat(f.ProvincialTax)||0, tip=parseFloat(f.TipAmount)||0;
+            const total=Math.round((parseFloat(f.TotalAmount)||0)*100)/100;
+            const expense=Math.round((sub+prov+tip+(gst-recover))*100)/100;
+            const expAcct=((f.Category||'').match(/^\s*([0-9A-Za-z]+)/)||[])[1]||'';
+            const cardAcct=cardAccountFor(f.SubmittedBy);
+            if(!expAcct) warnings.push(`${f.ReceiptRef}: missing expense account (category)`);
+            if(!cardAcct) warnings.push(`${f.ReceiptRef}: no card account for “${f.SubmittedBy||'?'}”`);
+            const cmt=`${f.Vendor||''} (${f.Province||'?'})`.replace(/"/g,'');
+            out+='<GeneralLedger>\r\n';
+            out+=`"${f.ReceiptRef||'REC'}","${impDate(f.ReceiptDate)}","${cmt}"\r\n`;
+            if(recover>0) out+=`"2082","${recover.toFixed(2)}","0.00","GST 50% rebate"\r\n`;
+            out+=`"${expAcct}","${expense.toFixed(2)}","0.00","${cmt}"\r\n`;
+            out+=`"${cardAcct}","0.00","${total.toFixed(2)}","Card: ${(f.SubmittedBy||'').replace(/"/g,'')}"\r\n`;
+            out+='</GeneralLedger>\r\n';
+        });
+        return { text: out, warnings };
+    }
+
+    function downloadImp(){
+        const recs=reconWorkingSet();
+        if(!recs.length){ showToast('Select receipts (or filter the view) to export.'); return; }
+        const { text, warnings }=buildImp(recs);
+        if(warnings.length && !confirm('Some receipts are missing an account:\n\n'+warnings.join('\n')+'\n\nDownload anyway?')) return;
+        downloadBlob(text, `receipts-${new Date().toISOString().slice(0,10)}.IMP`, 'text/plain');
+        showToast(`DRAFT .IMP for ${recs.length} receipt(s) — import into a TEST company to verify the format.`);
     }
 
     // Init

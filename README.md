@@ -141,6 +141,11 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-17 (Phase 3 — Increment 3)
+- **Batch creation** (spec §8.4): "Create Batch for Approval" modal — bundles the selected/filtered **reconciled, un-batched** receipts into a new `Receipt Batches` item (`BATCH-YYYY-NN`, computed totals, accountant notes, status `pending_approval`) and stamps each receipt's `BatchRef`.
+- **Sage General Journal `.IMP` export** (spec §5.4 posting model): "Download Sage Import (.IMP)" builds the confirmed two-debit posting per receipt — `0.50 × GST` → `2082`, `subtotal + provincial tax + tip + other 0.50 × GST` → the category's expense account, credit the cardholder's RBC card account (`2071/2072/2073/2076` by submitter). Balances to the card total; date as MM-DD-YYYY. **DRAFT format** — the accounts/amounts are confirmed (J674) but the GeneralLedger block layout needs a Sage test-company import to lock; the format template is isolated for a one-spot fix.
+- **PSB GST rebate card** (spec §8.6): live Total GST + 50% rebate for the current view, with **RC4034 CSV** export (date, vendor, ref, GST).
+
 ### 2026-06-17 (Phase 3 — Increment 2)
 - **Row expand + inline editing** (spec §8.1): click any queue row to expand it — receipt image on the left (fetched via the Graph `/shares` API from the stored sharing link), full editable form on the right (vendor, date, province, subtotal/GST/prov tax/tip/total, category, flag, note). Editing province or total/tip recomputes the GST/provincial split live; Save PATCHes back to SharePoint (dates written as noon-Central to avoid UTC day-rollback). Per-row "Mark reconciled" sets status + ReconciledBy/At.
 - **Bulk actions** (spec §8.2): checkbox column + select-all, a bulk bar with bulk category assignment and bulk mark-reconciled across the selection.
