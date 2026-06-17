@@ -796,6 +796,23 @@
         .flag-cell { color:#a11111; font-weight:600; white-space:normal; }
         .recon-prov-select { padding:2px 4px; border:1px solid var(--border); border-radius:4px; font-family:inherit; font-size:12px; }
         .btn-sm { padding:6px 12px; font-size:13px; }
+        table.recon-table th.chk, table.recon-table td.chk { width:34px; text-align:center; cursor:default; }
+        table.recon-table tbody tr.main-row { cursor:pointer; }
+        .recon-bulkbar { display:none; align-items:center; gap:12px; flex-wrap:wrap; background:#eef5fc; border:1px solid #cfe3f7; border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:14px; }
+        .recon-bulkbar select { padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-family:inherit; font-size:14px; }
+        .recon-bulkbar .sel-count { font-weight:700; color:var(--primary); }
+        tr.recon-detail > td { background:#fbfcfe; padding:16px; white-space:normal; }
+        .recon-detail-grid { display:flex; gap:20px; flex-wrap:wrap; }
+        .recon-detail-img { flex:0 0 320px; max-width:320px; }
+        .recon-img { width:100%; border:1px solid var(--border); border-radius:8px; }
+        .recon-noimg { color:var(--text-light); font-size:13px; padding:12px; border:1px dashed var(--border); border-radius:8px; }
+        .recon-form { flex:1 1 360px; display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; align-items:end; }
+        .recon-form .fld { display:flex; flex-direction:column; }
+        .recon-form .fld.full { grid-column:1 / -1; }
+        .recon-form label { font-size:12px; color:var(--text-light); margin-bottom:2px; }
+        .recon-form input, .recon-form select, .recon-form textarea { padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-family:inherit; font-size:14px; color:var(--text); }
+        .recon-form textarea { min-height:46px; resize:vertical; }
+        .recon-form-actions { grid-column:1 / -1; display:flex; gap:10px; margin-top:4px; }
     </style>
 </head>
 <body>
@@ -903,6 +920,10 @@
         <button id="submitReceiptTile" class="btn-vehicle-choice" onclick="chooseSubmitReceipt()">
             <div class="choice-title">Submit a Receipt</div>
             <div class="choice-desc">Snap a receipt — taxes are read automatically</div>
+        </button>
+        <button id="reconDashTile" class="btn-vehicle-choice" style="display:none;" onclick="openReconciliation()">
+            <div class="choice-title">Receipt Reconciliation</div>
+            <div class="choice-desc">Review, edit, batch and export submitted receipts</div>
         </button>
     </div>
 </div>
@@ -1295,6 +1316,15 @@
         <div class="field"><label>Category</label><select id="reconCategory" onchange="renderReconciliation()"><option value="">All</option></select></div>
         <div class="field"><button class="btn btn-outline btn-sm" onclick="clearReconFilters()">Clear filters</button></div>
     </div>
+    <div class="recon-bulkbar" id="reconBulkBar">
+        <span class="sel-count" id="reconSelCount">0 selected</span>
+        <label>Set category:
+            <select id="reconBulkCat"><option value="">— choose —</option></select>
+        </label>
+        <button class="btn btn-outline btn-sm" onclick="bulkApplyCategory()">Apply category</button>
+        <button class="btn btn-outline btn-sm" onclick="bulkMarkReconciled()">Mark reconciled</button>
+        <button class="btn btn-outline btn-sm" onclick="clearReconSelection()">Clear selection</button>
+    </div>
     <div class="recon-table-wrap">
         <table class="recon-table" id="reconTable">
             <thead id="reconHead"></thead>
@@ -1454,7 +1484,10 @@
         const tile = document.getElementById('submitReceiptTile');
         // Hide the capture entry only when we positively know the user is NOT a submitter.
         if (tile) tile.style.display = (receiptRoles.submitter === false) ? 'none' : '';
-        // Desktop accountant (Emmanuel) → reconciliation dashboard (spec §4 / §8).
+        // Always-available reconciliation entry for accountants (fallback if auto-route is skipped).
+        const dashTile = document.getElementById('reconDashTile');
+        if (dashTile) dashTile.style.display = (receiptRoles.accountant === true) ? '' : 'none';
+        // Desktop accountant (Emmanuel) → straight to reconciliation dashboard (spec §4 / §8).
         // Phase 4 will add the approver (Bernie) → approval dashboard branch here.
         const isDesktop = window.matchMedia('(min-width: 1024px)').matches;
         if (receiptRoles.accountant === true && isDesktop) {
@@ -2848,12 +2881,15 @@
     async function openReconciliation(){
         hideAllReceiptViews();
         document.getElementById('reconciliationDashboard').style.display = 'block';
+        reconSelected.clear();
+        try { await loadReceiptCategories(); } catch (e) { /* category dropdowns degrade gracefully */ }
+        populateReconCategoryControls();
         await loadReconciliation();
     }
 
     async function loadReconciliation(){
         const body = document.getElementById('reconBody');
-        body.innerHTML = '<tr><td colspan="13" class="recon-empty">Loading…</td></tr>';
+        body.innerHTML = '<tr><td colspan="14" class="recon-empty">Loading…</td></tr>';
         try {
             await refreshAccessToken();
             const site = await graphSite();
@@ -2871,7 +2907,7 @@
             renderReconciliation();
         } catch (err) {
             console.error(err);
-            body.innerHTML = `<tr><td colspan="13" class="recon-empty">Could not load receipts: ${reconEsc(err.message)}</td></tr>`;
+            body.innerHTML = `<tr><td colspan="14" class="recon-empty">Could not load receipts: ${reconEsc(err.message)}</td></tr>`;
         }
     }
 
@@ -2917,7 +2953,8 @@
 
     function renderReconciliation(){
         const head=document.getElementById('reconHead'), body=document.getElementById('reconBody');
-        head.innerHTML='<tr>'+RECON_COLS.map(c=>{
+        const COLSPAN = RECON_COLS.length + 1;
+        head.innerHTML='<tr><th class="chk"><input type="checkbox" id="reconSelAll" onclick="toggleSelectAll(this)"></th>'+RECON_COLS.map(c=>{
             const arrow = reconSort.key===c.key ? `<span class="arrow">${reconSort.dir>0?'▲':'▼'}</span>` : '';
             return `<th class="${c.num?'num':''}" onclick="setReconSort('${c.key}')">${c.label} ${arrow}</th>`;
         }).join('')+'</tr>';
@@ -2932,17 +2969,19 @@
         });
 
         document.getElementById('reconCount').textContent = `${rows.length} receipt${rows.length===1?'':'s'}`;
-        if(!rows.length){ body.innerHTML='<tr><td colspan="13" class="recon-empty">No receipts match.</td></tr>'; return; }
+        if(!rows.length){ body.innerHTML=`<tr><td colspan="${COLSPAN}" class="recon-empty">No receipts match.</td></tr>`; updateBulkBar(); return; }
         const money=v=>{ const n=parseFloat(v); return isNaN(n)?'':'$'+n.toFixed(2); };
         body.innerHTML=rows.map(r=>{
             const f=r.f, st=(f.Status||'submitted').toLowerCase();
             const provOpts=['',...RECEIPT_PROVINCES].map(p=>`<option value="${p}"${p===(f.Province||'')?' selected':''}>${p||'—'}</option>`).join('');
-            return `<tr>
+            const checked=reconSelected.has(r.id)?' checked':'';
+            return `<tr class="main-row" id="row-${r.id}" onclick="toggleReconRow('${r.id}', event)">
+                <td class="chk" onclick="event.stopPropagation()"><input type="checkbox"${checked} onchange="toggleReconSelect('${r.id}')"></td>
                 <td><span class="status-badge status-${st}">${reconEsc(f.Status||'submitted')}</span></td>
                 <td>${reconEsc(f.ReceiptRef)}</td>
                 <td>${reconEsc((f.ReceiptDate||'').slice(0,10))}</td>
                 <td>${reconEsc(f.Vendor)}</td>
-                <td><select class="recon-prov-select" onchange="changeReconProvince('${r.id}', this.value)">${provOpts}</select></td>
+                <td onclick="event.stopPropagation()"><select class="recon-prov-select" onchange="changeReconProvince('${r.id}', this.value)">${provOpts}</select></td>
                 <td>${reconEsc(f.SubmittedBy)}</td>
                 <td>${reconEsc(f.CategoryLabel)}</td>
                 <td class="num">${money(f.Subtotal)}</td>
@@ -2953,6 +2992,7 @@
                 <td class="flag-cell">${reconEsc(f.Flag)}</td>
             </tr>`;
         }).join('');
+        updateBulkBar();
     }
 
     // Inline province correction recomputes the GST/provincial split from the
@@ -2988,6 +3028,190 @@
             showToast('Could not save the province change — reloading.');
             loadReconciliation();
         }
+    }
+
+    // ---- Selection + bulk actions ----
+    const reconSelected = new Set();
+
+    function allReconCats(){ return (receiptCategories||[]).concat(receiptOtherCategories||[]); }
+    function reconCatOptionsHTML(selGl){
+        return '<option value="">— choose —</option>' + allReconCats().map(c=>
+            `<option value="${reconEsc(c.glCode)}"${c.glCode===selGl?' selected':''}>${reconEsc(c.label)} (${reconEsc(c.glCode)})</option>`).join('');
+    }
+    function populateReconCategoryControls(){
+        const bulk=document.getElementById('reconBulkCat');
+        if(bulk) bulk.innerHTML = reconCatOptionsHTML('');
+    }
+
+    function toggleReconSelect(id){
+        if(reconSelected.has(id)) reconSelected.delete(id); else reconSelected.add(id);
+        updateBulkBar();
+    }
+    function toggleSelectAll(cb){
+        const ids=filteredRecon().map(r=>r.id);
+        if(cb.checked) ids.forEach(i=>reconSelected.add(i)); else ids.forEach(i=>reconSelected.delete(i));
+        renderReconciliation();
+    }
+    function clearReconSelection(){ reconSelected.clear(); renderReconciliation(); }
+    function updateBulkBar(){
+        const bar=document.getElementById('reconBulkBar'); if(!bar) return;
+        const n=reconSelected.size;
+        bar.style.display = n ? 'flex' : 'none';
+        const c=document.getElementById('reconSelCount'); if(c) c.textContent=`${n} selected`;
+        const all=document.getElementById('reconSelAll');
+        if(all){ const ids=filteredRecon().map(r=>r.id); all.checked = ids.length>0 && ids.every(i=>reconSelected.has(i)); }
+    }
+
+    // PATCH a single Receipt Claims item's fields.
+    async function reconPatch(id, fields){
+        await refreshAccessToken();
+        const site=await graphSite();
+        const listId=await graphListId(site.id, CONFIG.receiptClaimsList);
+        const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items/${id}/fields`,{
+            method:'PATCH', headers:{ 'Authorization':`Bearer ${accessToken}`, 'Content-Type':'application/json' },
+            body: JSON.stringify(fields) });
+        if(!res.ok) throw new Error('PATCH '+res.status);
+    }
+
+    async function bulkApplyCategory(){
+        const gl=document.getElementById('reconBulkCat').value;
+        if(!gl){ showToast('Pick a category first.'); return; }
+        const cat=allReconCats().find(c=>c.glCode===gl); if(!cat) return;
+        const ids=[...reconSelected]; if(!ids.length) return;
+        showToast(`Updating ${ids.length}…`);
+        try{
+            for(const id of ids){
+                await reconPatch(id, { Category:`${cat.glCode} - ${cat.label}`, CategoryLabel:cat.label });
+                const rec=reconAll.find(r=>r.id===id); if(rec){ rec.f.Category=`${cat.glCode} - ${cat.label}`; rec.f.CategoryLabel=cat.label; }
+            }
+            showToast(`Category set on ${ids.length} receipt${ids.length===1?'':'s'}.`);
+            renderReconciliation();
+        }catch(e){ console.error(e); showToast('Bulk update failed — reloading.'); loadReconciliation(); }
+    }
+
+    async function bulkMarkReconciled(){
+        const ids=[...reconSelected]; if(!ids.length) return;
+        const who=(currentUser&&(currentUser.name||currentUser.username))||'';
+        const now=new Date().toISOString();
+        showToast(`Marking ${ids.length} reconciled…`);
+        try{
+            for(const id of ids){
+                await reconPatch(id, { Status:'reconciled', ReconciledBy:who, ReconciledAt:now });
+                const rec=reconAll.find(r=>r.id===id); if(rec){ rec.f.Status='reconciled'; rec.f.ReconciledBy=who; rec.f.ReconciledAt=now; }
+            }
+            reconSelected.clear();
+            showToast(`${ids.length} marked reconciled.`);
+            renderReconciliation();
+        }catch(e){ console.error(e); showToast('Bulk reconcile failed — reloading.'); loadReconciliation(); }
+    }
+
+    // ---- Row expand + inline edit ----
+    function toggleReconRow(id){
+        const existing=document.getElementById('detail-'+id);
+        if(existing){ existing.remove(); return; }
+        document.querySelectorAll('tr.recon-detail').forEach(e=>e.remove());  // one open at a time
+        const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        const mainRow=document.getElementById('row-'+id); if(!mainRow) return;
+        const tr=document.createElement('tr'); tr.className='recon-detail'; tr.id='detail-'+id;
+        const td=document.createElement('td'); td.colSpan=RECON_COLS.length+1;
+        td.innerHTML=reconDetailHTML(rec);
+        tr.appendChild(td); mainRow.after(tr);
+        loadReceiptImage(rec);
+    }
+
+    function reconDetailHTML(rec){
+        const f=rec.f, id=rec.id;
+        const provOpts=['',...RECEIPT_PROVINCES].map(p=>`<option value="${p}"${p===(f.Province||'')?' selected':''}>${p||'— unknown —'}</option>`).join('');
+        const v=k=>reconEsc(f[k]==null?'':f[k]);
+        const n=k=>{ const x=parseFloat(f[k]); return isNaN(x)?'':x; };
+        const glSel=(()=>{ const m=(f.Category||'').match(/^\s*([0-9A-Za-z]+)/); return m?m[1]:''; })();
+        return `<div class="recon-detail-grid">
+            <div class="recon-detail-img" id="img-${id}"><div class="recon-noimg">Loading image…</div></div>
+            <div class="recon-form">
+                <div class="fld full"><label>Vendor</label><input id="ed-Vendor-${id}" value="${v('Vendor')}"></div>
+                <div class="fld"><label>Date</label><input type="date" id="ed-ReceiptDate-${id}" value="${(f.ReceiptDate||'').slice(0,10)}"></div>
+                <div class="fld"><label>Province</label><select id="ed-Province-${id}" onchange="reconRecalcForm('${id}')">${provOpts}</select></div>
+                <div class="fld"><label>Subtotal ($)</label><input type="number" step="0.01" id="ed-Subtotal-${id}" value="${n('Subtotal')}"></div>
+                <div class="fld"><label>GST ($)</label><input type="number" step="0.01" id="ed-GSTAmount-${id}" value="${n('GSTAmount')}"></div>
+                <div class="fld"><label>Provincial tax ($)</label><input type="number" step="0.01" id="ed-ProvincialTax-${id}" value="${n('ProvincialTax')}"></div>
+                <div class="fld"><label>Tip ($)</label><input type="number" step="0.01" id="ed-TipAmount-${id}" value="${n('TipAmount')}" onchange="reconRecalcForm('${id}')"></div>
+                <div class="fld"><label>Total paid ($)</label><input type="number" step="0.01" id="ed-TotalAmount-${id}" value="${n('TotalAmount')}" onchange="reconRecalcForm('${id}')"></div>
+                <div class="fld"><label>Category</label><select id="ed-Category-${id}">${reconCatOptionsHTML(glSel)}</select></div>
+                <div class="fld"><label>Flag</label><input id="ed-Flag-${id}" value="${v('Flag')}" placeholder="(none)"></div>
+                <div class="fld full"><label>Note</label><textarea id="ed-Description-${id}">${v('Description')}</textarea></div>
+                <div class="recon-form-actions">
+                    <button class="btn btn-success btn-sm" onclick="saveReconRow('${id}')">Save changes</button>
+                    <button class="btn btn-outline btn-sm" onclick="markReconciledRow('${id}')">Mark reconciled</button>
+                    <button class="btn btn-outline btn-sm" onclick="toggleReconRow('${id}')">Close</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // Recompute the GST/provincial split in the open editor from total - tip.
+    function reconRecalcForm(id){
+        const prov=document.getElementById('ed-Province-'+id).value;
+        const total=parseFloat(document.getElementById('ed-TotalAmount-'+id).value)||0;
+        const tip=parseFloat(document.getElementById('ed-TipAmount-'+id).value)||0;
+        const taxable=Math.max(0,total-tip);
+        let subtotal,gst,prov2;
+        if(!prov){ subtotal=taxable; gst=0; prov2=0; }
+        else { const combined=0.05+(PROVINCE_PROV_RATE[prov]||0); subtotal=Math.round((taxable/(1+combined))*100)/100; gst=Math.round(subtotal*0.05*100)/100; prov2=Math.round((taxable-subtotal-gst)*100)/100; }
+        document.getElementById('ed-Subtotal-'+id).value=subtotal;
+        document.getElementById('ed-GSTAmount-'+id).value=gst;
+        document.getElementById('ed-ProvincialTax-'+id).value=prov2;
+    }
+
+    // Fetch the receipt image via the Graph shares API (the stored ReceiptImageURL
+    // is a sharing link, not a direct image src).
+    async function loadReceiptImage(rec){
+        const box=document.getElementById('img-'+rec.id); if(!box) return;
+        const url=rec.f.ReceiptImageURL;
+        if(!url){ box.innerHTML='<div class="recon-noimg">No image link on this receipt.</div>'; return; }
+        try{
+            await refreshAccessToken();
+            const shareId='u!'+btoa(url).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
+            const res=await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem/content`,{ headers:{ 'Authorization':`Bearer ${accessToken}` } });
+            if(!res.ok) throw new Error('img '+res.status);
+            const u=URL.createObjectURL(await res.blob());
+            box.innerHTML=`<a href="${u}" target="_blank" rel="noopener"><img src="${u}" class="recon-img" alt="receipt image"></a>`;
+        }catch(e){ console.error(e); box.innerHTML=`<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(url)}" target="_blank" rel="noopener">Open in SharePoint</a></div>`; }
+    }
+
+    async function saveReconRow(id){
+        const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        const num=el=>{ const x=parseFloat(document.getElementById(el).value); return isNaN(x)?0:Math.round(x*100)/100; };
+        const gl=document.getElementById('ed-Category-'+id).value;
+        const cat=allReconCats().find(c=>c.glCode===gl);
+        const dateVal=document.getElementById('ed-ReceiptDate-'+id).value;
+        const fields={
+            Vendor:document.getElementById('ed-Vendor-'+id).value.trim(),
+            ReceiptDate: dateVal ? dateVal+'T12:00:00-06:00' : rec.f.ReceiptDate,   // noon Central, avoid UTC day-rollback
+            Province:document.getElementById('ed-Province-'+id).value,
+            Subtotal:num('ed-Subtotal-'+id), GSTAmount:num('ed-GSTAmount-'+id),
+            ProvincialTax:num('ed-ProvincialTax-'+id), TipAmount:num('ed-TipAmount-'+id),
+            TotalAmount:num('ed-TotalAmount-'+id),
+            Description:document.getElementById('ed-Description-'+id).value.trim(),
+            Flag:document.getElementById('ed-Flag-'+id).value.trim(),
+        };
+        if(cat){ fields.Category=`${cat.glCode} - ${cat.label}`; fields.CategoryLabel=cat.label; }
+        try{
+            await reconPatch(id, fields);
+            Object.assign(rec.f, fields);
+            showToast(`Saved ${rec.f.ReceiptRef||'receipt'}.`);
+            renderReconciliation();
+        }catch(e){ console.error(e); showToast('Save failed — reloading.'); loadReconciliation(); }
+    }
+
+    async function markReconciledRow(id){
+        const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        const who=(currentUser&&(currentUser.name||currentUser.username))||''; const now=new Date().toISOString();
+        try{
+            await reconPatch(id, { Status:'reconciled', ReconciledBy:who, ReconciledAt:now });
+            rec.f.Status='reconciled'; rec.f.ReconciledBy=who; rec.f.ReconciledAt=now;
+            showToast(`${rec.f.ReceiptRef||'Receipt'} reconciled.`);
+            renderReconciliation();
+        }catch(e){ console.error(e); showToast('Could not reconcile — reloading.'); loadReconciliation(); }
     }
 
     // Init

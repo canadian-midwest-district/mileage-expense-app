@@ -141,7 +141,12 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
-### 2026-06-17
+### 2026-06-17 (Phase 3 — Increment 2)
+- **Row expand + inline editing** (spec §8.1): click any queue row to expand it — receipt image on the left (fetched via the Graph `/shares` API from the stored sharing link), full editable form on the right (vendor, date, province, subtotal/GST/prov tax/tip/total, category, flag, note). Editing province or total/tip recomputes the GST/provincial split live; Save PATCHes back to SharePoint (dates written as noon-Central to avoid UTC day-rollback). Per-row "Mark reconciled" sets status + ReconciledBy/At.
+- **Bulk actions** (spec §8.2): checkbox column + select-all, a bulk bar with bulk category assignment and bulk mark-reconciled across the selection.
+- **Accountant fallback entry:** a "Receipt Reconciliation" tile now shows on the vehicle screen for `ReceiptAccountant` members, so the dashboard is reachable even if the desktop auto-route is skipped.
+
+### 2026-06-17 (Phase 3 — Increment 1)
 - **Phase 3 (Emmanuel's reconciliation dashboard) — Increment 1.** Added the desktop `reconciliationDashboard` view (spec §8): loads all `Receipt Claims` items via Graph and renders a full-width queue table (Status, Ref, Date, Vendor, Province, Submitter, Category, Subtotal, GST, Prov Tax, Tip, Total, Flag) with color-coded status badges. Status tabs (All / Submitted / Reconciled / Flagged), click-to-sort columns, and date-range / submitter / category filters. **Inline province correction** recomputes the GST/provincial split from the tax-inclusive base (statutory rates per §5.4) and PATCHes the item back to SharePoint. Role routing now sends a desktop `ReceiptAccountant` (Emmanuel) straight to the dashboard on login. Still to come: row-expand inline editing + bulk actions (Increment 2); batch creation + General Journal `.IMP` export + PSB rebate card (Increment 3).
 
 ### 2026-06-16
