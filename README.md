@@ -141,6 +141,10 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-19
+- **Sage posting pivot: General Journal entry instead of `.IMP` import.** Confirmed with Sage that **Sage 50 Canada cannot import journal entries** (only lists / sales invoices). Replaced the `.IMP` download with a **"General Journal Entry"** action that builds a consolidated, balanced GJ entry for the selected/filtered receipts — grouped lines (DR `2082` = 50% of total GST; DR each expense account = subtotal+prov tax+tip+other 50% GST; CR each cardholder's RBC card account `2071/2072/2073/2076`) — shown in a modal with **Copy** and **Download CSV**, for Emmanuel to key into Sage's General Journal (~1 min/batch). Posting accounts confirmed against Emmanuel's chart of accounts (Sage version 33002). Emmanuel signed off on this approach.
+- **Console cutover:** merged the hostname-aware `console-split` branch to main — `travel.` is now capture-only; the reconciliation console lives at `expenses.canadianmidwest.ca` (repo `receipt-console`, same `index.html`).
+
 ### 2026-06-17 (Phase 3 — Increment 3)
 - **Batch creation** (spec §8.4): "Create Batch for Approval" modal — bundles the selected/filtered **reconciled, un-batched** receipts into a new `Receipt Batches` item (`BATCH-YYYY-NN`, computed totals, accountant notes, status `pending_approval`) and stamps each receipt's `BatchRef`.
 - **Sage General Journal `.IMP` export** (spec §5.4 posting model): "Download Sage Import (.IMP)" builds the confirmed two-debit posting per receipt — `0.50 × GST` → `2082`, `subtotal + provincial tax + tip + other 0.50 × GST` → the category's expense account, credit the cardholder's RBC card account (`2071/2072/2073/2076` by submitter). Balances to the card total; date as MM-DD-YYYY. **DRAFT format** — the accounts/amounts are confirmed (J674) but the GeneralLedger block layout needs a Sage test-company import to lock; the format template is isolated for a one-spot fix.

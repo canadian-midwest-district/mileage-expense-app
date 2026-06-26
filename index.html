@@ -817,6 +817,12 @@
         .rebate-card { background:#f3f9f3; border:1px solid #cfe8cf; border-radius:8px; padding:8px 14px; font-size:14px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
         .rebate-card .rebate-title { font-weight:700; color:#107c10; }
         .recon-action-btns { display:flex; gap:10px; flex-wrap:wrap; }
+        table.je-table { width:100%; border-collapse:collapse; font-size:14px; }
+        table.je-table th, table.je-table td { padding:7px 10px; border-bottom:1px solid var(--border); text-align:left; }
+        table.je-table th { background:#f7f7f7; font-weight:700; position:sticky; top:0; }
+        table.je-table td.num, table.je-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
+        table.je-table tr.je-total td { font-weight:700; border-top:2px solid #ccc; }
+        .je-warn { margin-top:10px; color:#a11111; font-size:13px; }
     </style>
 </head>
 <body>
@@ -1330,7 +1336,7 @@
         </div>
         <div class="recon-action-btns">
             <button class="btn btn-primary btn-sm" onclick="openBatchModal()">Create Batch for Approval</button>
-            <button class="btn btn-outline btn-sm" onclick="downloadImp()">Download Sage Import (.IMP)</button>
+            <button class="btn btn-outline btn-sm" onclick="openJournalEntry()">General Journal Entry</button>
         </div>
     </div>
     <div class="recon-bulkbar" id="reconBulkBar">
@@ -1355,6 +1361,20 @@
     <h2>Not authorized</h2>
     <p>This is the receipt reconciliation console. Your account isn't set up for it. If you're submitting receipts, use the travel app instead.</p>
     <button class="btn btn-outline" onclick="signOut()">Sign out</button>
+</div>
+
+<!-- General Journal Entry Modal (reconciliation dashboard) -->
+<div id="journalModal" class="modal-overlay">
+    <div class="modal-content" style="max-width:680px;">
+        <h3>General Journal Entry</h3>
+        <p id="journalMeta" style="font-size:13px;color:var(--text-light);"></p>
+        <div id="journalTable" style="max-height:50vh;overflow:auto;"></div>
+        <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap;">
+            <button class="btn btn-outline btn-sm" onclick="copyJournal()">Copy</button>
+            <button class="btn btn-outline btn-sm" onclick="downloadJournalCsv()">Download CSV</button>
+            <button class="btn btn-primary btn-sm" onclick="closeJournalModal()">Done</button>
+        </div>
+    </div>
 </div>
 
 <!-- Create Batch Modal (reconciliation dashboard) -->
@@ -3364,11 +3384,13 @@
         }catch(e){ console.error(e); showToast('Batch creation failed — '+e.message); btn.disabled=false; btn.textContent='Create batch'; }
     }
 
-    // ---- Sage 50 General Journal .IMP export (spec §5.4 posting model) ----
-    // DRAFT format — the two-debit posting (accounts + amounts) is confirmed
-    // (Emmanuel's J674); the exact Sage 50 CA GeneralLedger block layout must be
-    // verified by importing into a TEST company. Keep the template here isolated
-    // so it's a one-spot fix once the test import confirms the syntax.
+    // ---- General Journal entry (spec §5.4 posting model) ----
+    // Sage 50 CA can't IMPORT journal entries (confirmed w/ Sage), so instead of a
+    // file we generate a consolidated, balanced GJ entry for the working set that
+    // Emmanuel keys into Sage's General Journal once per batch. Posting rule per
+    // receipt: 0.5×GST → 2082; subtotal+provincialTax+tip+other-0.5×GST → expense
+    // account (receipt's category GL); total → cardholder's RBC card account.
+    const CARD_NAMES = { '2071':'RBC Credit Card - Bob', '2072':'RBC Credit Card - Chris', '2073':'RBC Credit Card - Richard', '2076':'RBC Credit Card - Bernie' };
     function cardAccountFor(name){
         const n=(name||'').toLowerCase();
         if(/keith|(^|\s)bob(\s|$)/.test(n)) return '2071';
@@ -3377,40 +3399,69 @@
         if(/walle|bernie/.test(n)) return '2076';
         return '';
     }
-    function impDate(iso){ const p=(iso||'').slice(0,10).split('-'); return p.length===3?`${p[1]}-${p[2]}-${p[0]}`:''; } // MM-DD-YYYY
+    const r2 = x => Math.round(x*100)/100;
 
-    function buildImp(recs){
-        const warnings=[];
-        let out='<Version>\r\n"32101","1"\r\n</Version>\r\n';
+    // Build a consolidated journal entry (lines grouped by account) for recs.
+    function buildJournalEntry(recs){
+        const expense={}, cards={}, warnings=[]; let gst2082=0;
         recs.forEach(r=>{
             const f=r.f;
-            const gst=Math.round((parseFloat(f.GSTAmount)||0)*100)/100;
-            const recover=Math.round(gst*0.5*100)/100;
+            const gst=r2(parseFloat(f.GSTAmount)||0);
+            const recover=r2(gst*0.5);
             const sub=parseFloat(f.Subtotal)||0, prov=parseFloat(f.ProvincialTax)||0, tip=parseFloat(f.TipAmount)||0;
-            const total=Math.round((parseFloat(f.TotalAmount)||0)*100)/100;
-            const expense=Math.round((sub+prov+tip+(gst-recover))*100)/100;
+            const total=r2(parseFloat(f.TotalAmount)||0);
+            const expAmt=r2(sub+prov+tip+(gst-recover));
             const expAcct=((f.Category||'').match(/^\s*([0-9A-Za-z]+)/)||[])[1]||'';
-            const cardAcct=cardAccountFor(f.SubmittedBy);
-            if(!expAcct) warnings.push(`${f.ReceiptRef}: missing expense account (category)`);
-            if(!cardAcct) warnings.push(`${f.ReceiptRef}: no card account for “${f.SubmittedBy||'?'}”`);
-            const cmt=`${f.Vendor||''} (${f.Province||'?'})`.replace(/"/g,'');
-            out+='<GeneralLedger>\r\n';
-            out+=`"${f.ReceiptRef||'REC'}","${impDate(f.ReceiptDate)}","${cmt}"\r\n`;
-            if(recover>0) out+=`"2082","${recover.toFixed(2)}","0.00","GST 50% rebate"\r\n`;
-            out+=`"${expAcct}","${expense.toFixed(2)}","0.00","${cmt}"\r\n`;
-            out+=`"${cardAcct}","0.00","${total.toFixed(2)}","Card: ${(f.SubmittedBy||'').replace(/"/g,'')}"\r\n`;
-            out+='</GeneralLedger>\r\n';
+            const card=cardAccountFor(f.SubmittedBy);
+            gst2082=r2(gst2082+recover);
+            if(expAcct){ expense[expAcct]=expense[expAcct]||{name:f.CategoryLabel||'',amt:0}; expense[expAcct].amt=r2(expense[expAcct].amt+expAmt); }
+            else warnings.push(`${f.ReceiptRef||'?'}: no expense account (set a category)`);
+            if(card){ cards[card]=cards[card]||{name:CARD_NAMES[card]||('Card '+card),amt:0}; cards[card].amt=r2(cards[card].amt+total); }
+            else warnings.push(`${f.ReceiptRef||'?'}: no card account for “${f.SubmittedBy||'?'}”`);
         });
-        return { text: out, warnings };
+        const lines=[];
+        if(gst2082>0) lines.push({acct:'2082', name:'GST Paid', debit:gst2082, credit:0});
+        Object.keys(expense).sort().forEach(a=>lines.push({acct:a, name:expense[a].name, debit:expense[a].amt, credit:0}));
+        Object.keys(cards).sort().forEach(a=>lines.push({acct:a, name:cards[a].name, debit:0, credit:cards[a].amt}));
+        const totalDr=r2(lines.reduce((s,l)=>s+l.debit,0));
+        const totalCr=r2(lines.reduce((s,l)=>s+l.credit,0));
+        return { lines, totalDr, totalCr, count:recs.length, warnings };
     }
 
-    function downloadImp(){
+    let _lastJE=null;
+    function openJournalEntry(){
         const recs=reconWorkingSet();
-        if(!recs.length){ showToast('Select receipts (or filter the view) to export.'); return; }
-        const { text, warnings }=buildImp(recs);
-        if(warnings.length && !confirm('Some receipts are missing an account:\n\n'+warnings.join('\n')+'\n\nDownload anyway?')) return;
-        downloadBlob(text, `receipts-${new Date().toISOString().slice(0,10)}.IMP`, 'text/plain');
-        showToast(`DRAFT .IMP for ${recs.length} receipt(s) — import into a TEST company to verify the format.`);
+        if(!recs.length){ showToast('Select receipts (or filter the view) first.'); return; }
+        const je=buildJournalEntry(recs); _lastJE=je;
+        const batchRefs=[...new Set(recs.map(r=>r.f.BatchRef).filter(Boolean))];
+        const src=batchRefs.length===1?batchRefs[0]:'';
+        document.getElementById('journalMeta').innerHTML =
+            `${je.count} receipt(s)${src?` · batch <b>${reconEsc(src)}</b>`:''} &mdash; enter in Sage 50 → <b>Company → General Journal</b> (debits as positive, credits as the offset).`;
+        const money=v=>v?'$'+v.toFixed(2):'';
+        let rows=je.lines.map(l=>`<tr><td>${reconEsc(l.acct)}</td><td>${reconEsc(l.name)}</td><td class="num">${money(l.debit)}</td><td class="num">${money(l.credit)}</td></tr>`).join('');
+        const bal = Math.abs(je.totalDr-je.totalCr)<0.005;
+        rows+=`<tr class="je-total"><td colspan="2">Totals${bal?'':' ⚠ NOT BALANCED'}</td><td class="num">$${je.totalDr.toFixed(2)}</td><td class="num">$${je.totalCr.toFixed(2)}</td></tr>`;
+        document.getElementById('journalTable').innerHTML =
+            `<table class="je-table"><thead><tr><th>Account</th><th>Name</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>${rows}</tbody></table>` +
+            (je.warnings.length?`<div class="je-warn">⚠ ${je.warnings.map(reconEsc).join('<br>')}</div>`:'');
+        document.getElementById('journalModal').classList.add('active');
+    }
+    function closeJournalModal(){ document.getElementById('journalModal').classList.remove('active'); }
+
+    function journalRows(je){
+        return je.lines.map(l=>[l.acct, l.name, l.debit?l.debit.toFixed(2):'', l.credit?l.credit.toFixed(2):'']);
+    }
+    function copyJournal(){
+        if(!_lastJE) return;
+        const text=[['Account','Name','Debit','Credit'], ...journalRows(_lastJE), ['','Totals',_lastJE.totalDr.toFixed(2),_lastJE.totalCr.toFixed(2)]]
+            .map(r=>r.join('\t')).join('\n');
+        navigator.clipboard.writeText(text).then(()=>showToast('Journal entry copied.')).catch(()=>showToast('Copy failed — select the table manually.'));
+    }
+    function downloadJournalCsv(){
+        if(!_lastJE) return;
+        const csv=[['Account','Name','Debit','Credit'], ...journalRows(_lastJE), ['','Totals',_lastJE.totalDr.toFixed(2),_lastJE.totalCr.toFixed(2)]]
+            .map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+        downloadBlob(csv, `journal-entry-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv');
     }
 
     // Init
