@@ -3318,9 +3318,16 @@
     function exportRC4034(){
         const recs=filteredRecon();
         if(!recs.length){ showToast('Nothing to export in the current view.'); return; }
-        const rows=[['Date','Vendor','Receipt Ref','GST']].concat(recs.map(r=>[
-            (r.f.ReceiptDate||'').slice(0,10), (r.f.Vendor||'').replace(/"/g,"'"),
-            r.f.ReceiptRef||'', (parseFloat(r.f.GSTAmount)||0).toFixed(2) ]));
+        let totGst=0, totReb=0;
+        const body=recs.map(r=>{
+            const gst=r2(parseFloat(r.f.GSTAmount)||0);
+            const reb=r2(gst*0.5);                       // 50% PSB rebate (the claimable half)
+            totGst=r2(totGst+gst); totReb=r2(totReb+reb);
+            return [(r.f.ReceiptDate||'').slice(0,10), (r.f.Vendor||'').replace(/"/g,"'"),
+                    r.f.ReceiptRef||'', gst.toFixed(2), reb.toFixed(2)];
+        });
+        const rows=[['Date','Vendor','Receipt Ref','GST','GST Rebate (50%)'], ...body,
+                    ['','','Totals', totGst.toFixed(2), totReb.toFixed(2)]];
         const csv=rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('\r\n');
         downloadBlob(csv, `RC4034-GST-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv');
         showToast('RC4034 GST CSV downloaded.');
