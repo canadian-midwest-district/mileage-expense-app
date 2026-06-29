@@ -141,6 +141,9 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-19 (Phase 4 — review hardening)
+- Adversarial review of the approval flow → fixes: **approve/return are now ordered receipts-first, batch-status-last** with per-receipt try/catch + idempotent skip, so a mid-loop Graph failure leaves the batch still-pending and retryable (no half-approved limbo); a **live status re-check** guards against double-approve / stale-tab re-actioning; the **batch-detail modal always shows a Close button** even if the receipt load fails (no dead-end); `createBatch` reports any receipts that didn't attach instead of silently under-batching; and the **print CSS** resets `overflow/height` so long batches paginate instead of truncating to one page. (Deferred: wiring the unused `exported` batch status.)
+
 ### 2026-06-19 (Phase 4b — Emmanuel batch visibility)
 - Emmanuel's reconciliation dashboard gets a **"Batches"** button → the batch list/detail view (reused), so he can **see batch status (incl. "Approved")** and **Print** an approved batch to attach to the General Journal. The view shows a back-link ("← Receipts") and is titled "Batches" for him. **Approve / Return are now gated to the approver** (Bernie) — Emmanuel sees the same detail read-only. Answers Emmanuel's questions about seeing approval status and printing the approved batch.
 

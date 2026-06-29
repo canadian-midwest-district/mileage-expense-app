@@ -835,8 +835,8 @@
         @media print {
             body * { visibility:hidden; }
             #batchDetailModal, #batchDetailModal * { visibility:visible; }
-            #batchDetailModal { position:absolute; inset:0; background:#fff; display:block !important; padding:0; }
-            #batchDetailModal .modal-content { max-height:none; max-width:100%; box-shadow:none; border-radius:0; }
+            #batchDetailModal { position:absolute; inset:0; background:#fff; display:block !important; padding:0; overflow:visible !important; }
+            #batchDetailModal .modal-content { max-height:none !important; height:auto !important; overflow:visible !important; max-width:100%; box-shadow:none; border-radius:0; }
             #bdActions { display:none !important; }
         }
     </style>
@@ -3434,9 +3434,16 @@
                 method:'POST', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':'application/json'},
                 body:JSON.stringify({fields}) });
             if(!cr.ok) throw new Error('batch create '+cr.status);
-            for(const r of recs){ await reconPatch(r.id, { BatchRef:ref }); const rec=reconAll.find(x=>x.id===r.id); if(rec) rec.f.BatchRef=ref; }
+            // Stamp each receipt with the BatchRef; collect (don't abort on) per-receipt failures
+            // so a mid-loop error doesn't silently leave the batch under-attached.
+            const failed=[];
+            for(const r of recs){
+                try{ await reconPatch(r.id, { BatchRef:ref }); const rec=reconAll.find(x=>x.id===r.id); if(rec) rec.f.BatchRef=ref; }
+                catch(e){ console.error(e); failed.push(r.f.ReceiptRef||r.id); }
+            }
             document.getElementById('batchNotes').value='';
-            showToast(`Created ${ref} with ${recs.length} receipt(s).`);
+            if(failed.length) showToast(`Batch ${ref} created, but ${failed.length} receipt(s) didn’t attach: ${failed.join(', ')} — re-batch them.`);
+            else showToast(`Created ${ref} with ${recs.length} receipt(s).`);
             closeBatchModal(); reconSelected.clear(); renderReconciliation();
         }catch(e){ console.error(e); showToast('Batch creation failed — '+e.message); btn.disabled=false; btn.textContent='Create batch'; }
     }
@@ -3587,9 +3594,22 @@
             const ref=b.f.BatchRef||'§none';
             _bdClaims=(await loadListItems(CONFIG.receiptClaimsList)).filter(r=>(r.f.BatchRef||'')===ref);
             renderBatchDetail(b);
-        }catch(e){ console.error(e); document.getElementById('bdSummary').innerHTML=`<div class="bd-meta">Could not load receipts: ${reconEsc(e.message)}</div>`; }
+        }catch(e){ console.error(e);
+            document.getElementById('bdSummary').innerHTML=`<div class="bd-meta">Could not load receipts: ${reconEsc(e.message)}</div>`;
+            document.getElementById('bdActions').innerHTML='<button class="btn btn-primary btn-sm" onclick="closeBatchDetail()">Close</button>';
+        }
     }
     function closeBatchDetail(){ document.getElementById('batchDetailModal').classList.remove('active'); }
+
+    // Re-fetch a single batch's live Status (guards stale-tab / double-action).
+    async function getBatchStatus(id){
+        await refreshAccessToken();
+        const site=await graphSite();
+        const listId=await graphListId(site.id, CONFIG.receiptBatchesList);
+        const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items/${id}/fields?$select=Status`,{headers:{'Authorization':`Bearer ${accessToken}`,'Cache-Control':'no-cache'},cache:'no-store'});
+        if(!res.ok) throw new Error('batch GET '+res.status);
+        const d=await res.json(); return (d.Status||'');
+    }
 
     function renderBatchDetail(b){
         const f=b.f, claims=_bdClaims, n2=x=>x.toFixed(2);
@@ -3641,29 +3661,57 @@
         if(!res.ok) throw new Error('batch PATCH '+res.status);
     }
 
+    // Guard: re-check the batch is still pending before acting (stale tab / double-action).
+    async function batchStillPending(b){
+        let live;
+        try{ live=(await getBatchStatus(b.id)).toLowerCase(); }
+        catch(e){ console.error(e); showToast('Could not verify batch status — '+e.message); return false; }
+        if(live!=='pending_approval'){
+            b.f.Status=live; showToast(`Batch is already ${live||'changed'} — refreshed.`);
+            renderBatchDetail(b); renderBatches(); return false;
+        }
+        return true;
+    }
+
     async function approveBatch(batchId){
         const b=batchAll.find(x=>x.id===batchId); if(!b) return;
         if(!confirm(`Approve batch ${b.f.BatchRef||''}? This marks all ${_bdClaims.length} receipt(s) approved.`)) return;
+        if(!(await batchStillPending(b))) return;
         const who=(currentUser&&(currentUser.name||currentUser.username))||'', now=new Date().toISOString();
+        // Receipts FIRST (idempotent skip), batch status LAST — so a mid-loop failure
+        // leaves the batch reachable (still pending) and the Approve retryable.
+        const failed=[];
+        for(const r of _bdClaims){
+            if((r.f.Status||'').toLowerCase()==='approved') continue;
+            try{ await reconPatch(r.id, {Status:'approved', ApprovedBy:who, ApprovedAt:now}); r.f.Status='approved'; r.f.ApprovedBy=who; r.f.ApprovedAt=now; }
+            catch(e){ console.error(e); failed.push(r.f.ReceiptRef||r.id); }
+        }
+        if(failed.length){ showToast(`${_bdClaims.length-failed.length}/${_bdClaims.length} receipts updated — batch left pending. Failed: ${failed.join(', ')}. Retry Approve.`); return; }
         try{
             await batchPatch(b.id, {Status:'approved', ApprovedBy:who, ApprovedAt:now});
-            for(const r of _bdClaims){ await reconPatch(r.id, {Status:'approved', ApprovedBy:who, ApprovedAt:now}); }
             b.f.Status='approved'; b.f.ApprovedBy=who; b.f.ApprovedAt=now;
             showToast(`Batch ${b.f.BatchRef||''} approved.`); closeBatchDetail(); renderBatches();
-        }catch(e){ console.error(e); showToast('Approve failed — '+e.message); }
+        }catch(e){ console.error(e); showToast('Receipts approved, but batch status didn’t save — retry Approve. '+e.message); }
     }
 
     async function returnBatch(batchId){
         const b=batchAll.find(x=>x.id===batchId); if(!b) return;
         const notes=prompt('Return to Emmanuel — what needs fixing?', '');
         if(notes===null) return;
+        if(!(await batchStillPending(b))) return;
+        // Free the receipts FIRST (clear BatchRef, back to reconciled), batch status LAST.
+        const failed=[];
+        for(const r of _bdClaims){
+            if(!(r.f.BatchRef||'')) continue;   // already freed
+            try{ await reconPatch(r.id, {BatchRef:'', Status:'reconciled'}); r.f.BatchRef=''; r.f.Status='reconciled'; }
+            catch(e){ console.error(e); failed.push(r.f.ReceiptRef||r.id); }
+        }
+        if(failed.length){ showToast(`${_bdClaims.length-failed.length}/${_bdClaims.length} receipts freed — batch left pending. Failed: ${failed.join(', ')}. Retry Return.`); return; }
         try{
             await batchPatch(b.id, {Status:'returned', ReturnNotes:notes});
-            // Free the receipts (clear BatchRef, back to reconciled) so Emmanuel can fix and re-batch.
-            for(const r of _bdClaims){ await reconPatch(r.id, {BatchRef:'', Status:'reconciled'}); }
             b.f.Status='returned'; b.f.ReturnNotes=notes;
             showToast(`Batch ${b.f.BatchRef||''} returned to Emmanuel.`); closeBatchDetail(); renderBatches();
-        }catch(e){ console.error(e); showToast('Return failed — '+e.message); }
+        }catch(e){ console.error(e); showToast('Receipts freed, but batch status didn’t save — retry Return. '+e.message); }
     }
 
     // Init
