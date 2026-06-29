@@ -141,6 +141,9 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-06-19 (Phase 4b — Emmanuel batch visibility)
+- Emmanuel's reconciliation dashboard gets a **"Batches"** button → the batch list/detail view (reused), so he can **see batch status (incl. "Approved")** and **Print** an approved batch to attach to the General Journal. The view shows a back-link ("← Receipts") and is titled "Batches" for him. **Approve / Return are now gated to the approver** (Bernie) — Emmanuel sees the same detail read-only. Answers Emmanuel's questions about seeing approval status and printing the approved batch.
+
 ### 2026-06-19 (Phase 4a — Bernie's approval dashboard)
 - **View C — Batch Approval** (spec §9): on `expenses.` a `ReceiptApprover` (Bernie) is routed to a new `approvalDashboard`. Pending-approval batches list (BatchRef, period, prepared-by, counts, totals, flags, status) + History tab. Click a batch → detail modal with **totals by category**, **totals by province**, grand total, 50% GST rebate line, flag count, Emmanuel's notes, and a read-only receipts list with a "View flagged only" toggle. **Approve** sets the batch + all its receipts to `approved` (stamps ApprovedBy/At); **Return to Emmanuel** sets `returned`, records notes, and frees the receipts (clears BatchRef → back to `reconciled`) so they can be fixed and re-batched. **Print** uses a print-only CSS layout to produce a clean batch sheet to attach to the General Journal. Console routing now: accountant → reconciliation, approver → approval, neither → not authorized.
 

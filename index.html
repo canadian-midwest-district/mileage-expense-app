@@ -1326,6 +1326,7 @@
         <h2>Receipt Reconciliation</h2>
         <div>
             <span class="recon-count" id="reconCount"></span>
+            <button class="btn btn-outline btn-sm" onclick="openApprovalDashboard()">Batches</button>
             <button class="btn btn-outline btn-sm" onclick="loadReconciliation()">&#8635; Refresh</button>
             <span class="sign-out" onclick="signOut()" style="margin-left:12px;">Sign out</span>
         </div>
@@ -1382,9 +1383,10 @@
 <!-- ===== View C: Bernie's Approval Dashboard ===== -->
 <div id="approvalDashboard" class="recon-dashboard">
     <div class="recon-topbar">
-        <h2>Batch Approval</h2>
+        <h2 id="apprTitle">Batch Approval</h2>
         <div>
             <span class="recon-count" id="apprCount"></span>
+            <button id="apprBackBtn" class="btn btn-outline btn-sm" style="display:none;" onclick="openReconciliation()">&#8592; Receipts</button>
             <button class="btn btn-outline btn-sm" onclick="loadBatches()">&#8635; Refresh</button>
             <span class="sign-out" onclick="signOut()" style="margin-left:12px;">Sign out</span>
         </div>
@@ -3541,6 +3543,9 @@
     async function openApprovalDashboard(){
         hideAllReceiptViews();
         document.getElementById('approvalDashboard').style.display='block';
+        // Bernie (approver) approves here; Emmanuel (accountant) views status + prints, with a way back.
+        document.getElementById('apprTitle').textContent = (receiptRoles.approver===true) ? 'Batch Approval' : 'Batches';
+        const back=document.getElementById('apprBackBtn'); if(back) back.style.display = (receiptRoles.accountant===true) ? '' : 'none';
         await loadBatches();
     }
     async function loadBatches(){
@@ -3609,7 +3614,9 @@
         const st=(f.Status||'').toLowerCase();
         let a=`<button class="btn btn-outline btn-sm" id="bdFlagBtn" onclick="toggleBdFlagged()">View flagged only</button>`+
               `<button class="btn btn-outline btn-sm" onclick="window.print()">Print</button>`;
-        if(st==='pending_approval'){
+        // Approve / Return only for the approver (Bernie) on a pending batch.
+        // Emmanuel (accountant) views the same detail read-only to check status / print.
+        if(st==='pending_approval' && receiptRoles.approver===true){
             a+=`<button class="btn btn-outline btn-sm" style="border-color:#a11111;color:#a11111;" onclick="returnBatch('${b.id}')">Return to Emmanuel</button>`+
                `<button class="btn btn-success btn-sm" onclick="approveBatch('${b.id}')">Approve</button>`;
         }
