@@ -823,6 +823,22 @@
         table.je-table td.num, table.je-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
         table.je-table tr.je-total td { font-weight:700; border-top:2px solid #ccc; }
         .je-warn { margin-top:10px; color:#a11111; font-size:13px; }
+        /* ===== View C: Approval dashboard + batch detail ===== */
+        .bd-meta { font-size:13px; color:var(--text-light); margin-bottom:10px; }
+        .bd-card { background:#f7f9fb; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:12px; font-size:14px; }
+        .bd-card h4 { margin:0 0 8px; color:var(--primary); font-size:14px; }
+        table.bd-table { width:100%; border-collapse:collapse; font-size:13px; }
+        table.bd-table th, table.bd-table td { padding:6px 8px; border-bottom:1px solid var(--border); text-align:left; }
+        table.bd-table td.num, table.bd-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
+        table.bd-table tr.bd-total td { font-weight:700; border-top:2px solid #ccc; }
+        .appr-flag { color:#a11111; font-weight:600; }
+        @media print {
+            body * { visibility:hidden; }
+            #batchDetailModal, #batchDetailModal * { visibility:visible; }
+            #batchDetailModal { position:absolute; inset:0; background:#fff; display:block !important; padding:0; }
+            #batchDetailModal .modal-content { max-height:none; max-width:100%; box-shadow:none; border-radius:0; }
+            #bdActions { display:none !important; }
+        }
     </style>
 </head>
 <body>
@@ -1363,6 +1379,35 @@
     <button class="btn btn-outline" onclick="signOut()">Sign out</button>
 </div>
 
+<!-- ===== View C: Bernie's Approval Dashboard ===== -->
+<div id="approvalDashboard" class="recon-dashboard">
+    <div class="recon-topbar">
+        <h2>Batch Approval</h2>
+        <div>
+            <span class="recon-count" id="apprCount"></span>
+            <button class="btn btn-outline btn-sm" onclick="loadBatches()">&#8635; Refresh</button>
+            <span class="sign-out" onclick="signOut()" style="margin-left:12px;">Sign out</span>
+        </div>
+    </div>
+    <div class="recon-tabs" id="apprTabs">
+        <button class="recon-tab active" data-tab="pending" onclick="setBatchTab('pending')">Pending approval</button>
+        <button class="recon-tab" data-tab="history" onclick="setBatchTab('history')">History</button>
+    </div>
+    <div class="recon-table-wrap">
+        <table class="recon-table" id="apprTable"><thead id="apprHead"></thead><tbody id="apprBody"></tbody></table>
+    </div>
+</div>
+
+<!-- Batch Detail / Approval Modal -->
+<div id="batchDetailModal" class="modal-overlay">
+    <div class="modal-content" style="max-width:900px; max-height:88vh; overflow:auto;">
+        <h3 id="bdTitle">Batch</h3>
+        <div id="bdSummary"></div>
+        <div id="bdReceipts"></div>
+        <div id="bdActions" style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap;"></div>
+    </div>
+</div>
+
 <!-- General Journal Entry Modal (reconciliation dashboard) -->
 <div id="journalModal" class="modal-overlay">
     <div class="modal-content" style="max-width:680px;">
@@ -1557,9 +1602,11 @@
     // ship, routing == gate the receipt-capture entry on submitter membership.
     function routeReceiptViews() {
         if (APP_MODE === 'console') {
-            // Accountant console host (expenses.): dashboard only, no capture flows.
-            // Fail OPEN — deny only when we positively know the user is NOT an accountant.
-            if (receiptRoles.accountant === false) { showConsoleDenied(); }
+            // Console host (expenses.): accountant → reconciliation, approver → approval, else denied.
+            // Fail OPEN on unknown roles (membership unreadable) → default to reconciliation.
+            if (receiptRoles.accountant === true) { openReconciliation(); }
+            else if (receiptRoles.approver === true) { openApprovalDashboard(); }
+            else if (receiptRoles.accountant === false && receiptRoles.approver === false) { showConsoleDenied(); }
             else { openReconciliation(); }
             return;
         }
@@ -1587,6 +1634,7 @@
         document.getElementById('receiptCaptureView').style.display = 'none';
         document.getElementById('successScreen').style.display = 'none';
         document.getElementById('reconciliationDashboard').style.display = 'none';
+        document.getElementById('approvalDashboard').style.display = 'none';
         document.getElementById('consoleDenied').style.display = 'none';
         allChurches = [];
         selectedChurches = new Set();
@@ -2955,7 +3003,7 @@
     function reconEsc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
     function hideAllReceiptViews(){
-        ['vehicleSelectScreen','mainForm','districtForm','receiptCaptureView','successScreen','reconciliationDashboard','consoleDenied']
+        ['vehicleSelectScreen','mainForm','districtForm','receiptCaptureView','successScreen','reconciliationDashboard','approvalDashboard','consoleDenied']
             .forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
     }
 
@@ -3469,6 +3517,146 @@
         const csv=[['Account','Name','Debit','Credit'], ...journalRows(_lastJE), ['','Totals',_lastJE.totalDr.toFixed(2),_lastJE.totalCr.toFixed(2)]]
             .map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\r\n');
         downloadBlob(csv, `journal-entry-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv');
+    }
+
+    // ========== APPROVAL DASHBOARD (View C — Bernie) ==========
+    let batchAll=[], batchTab='pending', _bdClaims=[], _bdFlaggedOnly=false;
+
+    // Generic loader: all items of a list as [{id, f}].
+    async function loadListItems(listName){
+        await refreshAccessToken();
+        const site=await graphSite();
+        const listId=await graphListId(site.id, listName);
+        let url=`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items?$expand=fields&$top=200`;
+        const rows=[];
+        while(url){
+            const res=await fetch(url,{headers:{'Authorization':`Bearer ${accessToken}`,'Cache-Control':'no-cache'},cache:'no-store'});
+            const d=await res.json();
+            (d.value||[]).forEach(it=>rows.push({id:it.id, f:it.fields||{}}));
+            url=d['@odata.nextLink']||null;
+        }
+        return rows;
+    }
+
+    async function openApprovalDashboard(){
+        hideAllReceiptViews();
+        document.getElementById('approvalDashboard').style.display='block';
+        await loadBatches();
+    }
+    async function loadBatches(){
+        const body=document.getElementById('apprBody');
+        body.innerHTML='<tr><td colspan="8" class="recon-empty">Loading…</td></tr>';
+        try{ batchAll=await loadListItems(CONFIG.receiptBatchesList); renderBatches(); }
+        catch(e){ console.error(e); body.innerHTML=`<tr><td colspan="8" class="recon-empty">Could not load batches: ${reconEsc(e.message)}</td></tr>`; }
+    }
+    function setBatchTab(t){ batchTab=t; document.querySelectorAll('#apprTabs .recon-tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===t)); renderBatches(); }
+
+    function batchPeriod(f){ const a=(f.PeriodStart||'').slice(0,10), b=(f.PeriodEnd||'').slice(0,10); return a&&b?(a===b?a:`${a} → ${b}`):(a||b||''); }
+
+    function renderBatches(){
+        const head=document.getElementById('apprHead'), body=document.getElementById('apprBody');
+        head.innerHTML='<tr><th>Batch</th><th>Period</th><th>Prepared by</th><th class="num">Receipts</th><th class="num">Total</th><th class="num">GST</th><th class="num">Flags</th><th>Status</th></tr>';
+        const isPending=b=>(b.f.Status||'').toLowerCase()==='pending_approval';
+        let rows=batchAll.filter(b=> batchTab==='pending'?isPending(b):!isPending(b));
+        rows.sort((a,b)=>((b.f.PreparedAt||'')+'').localeCompare((a.f.PreparedAt||'')+''));
+        document.getElementById('apprCount').textContent=`${rows.length} batch${rows.length===1?'':'es'}`;
+        if(!rows.length){ body.innerHTML=`<tr><td colspan="8" class="recon-empty">No ${batchTab==='pending'?'pending':'past'} batches.</td></tr>`; return; }
+        const money=v=>{const n=parseFloat(v);return isNaN(n)?'':'$'+n.toFixed(2);};
+        body.innerHTML=rows.map(b=>{ const f=b.f, st=(f.Status||'').toLowerCase(), fc=parseInt(f.FlagCount)||0;
+            return `<tr class="main-row" onclick="openBatchDetail('${b.id}')">
+                <td>${reconEsc(f.BatchRef||f.Title)}</td><td>${reconEsc(batchPeriod(f))}</td><td>${reconEsc(f.PreparedBy)}</td>
+                <td class="num">${reconEsc(f.ReceiptCount||'')}</td><td class="num">${money(f.TotalAmount)}</td><td class="num">${money(f.TotalGST)}</td>
+                <td class="num ${fc?'appr-flag':''}">${fc||''}</td>
+                <td><span class="status-badge status-${st==='pending_approval'?'submitted':st}">${reconEsc(f.Status||'')}</span></td></tr>`;
+        }).join('');
+    }
+
+    async function openBatchDetail(batchId){
+        const b=batchAll.find(x=>x.id===batchId); if(!b) return;
+        document.getElementById('bdTitle').textContent=`Batch ${b.f.BatchRef||b.f.Title||''}`;
+        document.getElementById('bdSummary').innerHTML='<div class="bd-meta">Loading receipts…</div>';
+        document.getElementById('bdReceipts').innerHTML=''; document.getElementById('bdActions').innerHTML='';
+        _bdFlaggedOnly=false;
+        document.getElementById('batchDetailModal').classList.add('active');
+        try{
+            const ref=b.f.BatchRef||'§none';
+            _bdClaims=(await loadListItems(CONFIG.receiptClaimsList)).filter(r=>(r.f.BatchRef||'')===ref);
+            renderBatchDetail(b);
+        }catch(e){ console.error(e); document.getElementById('bdSummary').innerHTML=`<div class="bd-meta">Could not load receipts: ${reconEsc(e.message)}</div>`; }
+    }
+    function closeBatchDetail(){ document.getElementById('batchDetailModal').classList.remove('active'); }
+
+    function renderBatchDetail(b){
+        const f=b.f, claims=_bdClaims, n2=x=>x.toFixed(2);
+        const byCat={}, byProv={}; let tSub=0,tGst=0,tProv=0,tTot=0;
+        claims.forEach(r=>{ const x=r.f, sub=+x.Subtotal||0,g=+x.GSTAmount||0,p=+x.ProvincialTax||0,tot=+x.TotalAmount||0;
+            const ck=x.CategoryLabel||x.Category||'(uncategorized)'; (byCat[ck]=byCat[ck]||{c:0,sub:0,g:0,p:0,tot:0});
+            byCat[ck].c++; byCat[ck].sub+=sub; byCat[ck].g+=g; byCat[ck].p+=p; byCat[ck].tot+=tot;
+            const pk=x.Province||'(none)'; (byProv[pk]=byProv[pk]||{c:0,sub:0,g:0,p:0,tot:0});
+            byProv[pk].c++; byProv[pk].sub+=sub; byProv[pk].g+=g; byProv[pk].p+=p; byProv[pk].tot+=tot;
+            tSub+=sub; tGst+=g; tProv+=p; tTot+=tot; });
+        const line=(k,o)=>`<tr><td>${reconEsc(k)}</td><td class="num">${o.c}</td><td class="num">$${n2(o.sub)}</td><td class="num">$${n2(o.g)}</td><td class="num">$${n2(o.p)}</td><td class="num">$${n2(o.tot)}</td></tr>`;
+        const catRows=Object.keys(byCat).sort().map(k=>line(k,byCat[k])).join('');
+        const provRows=Object.keys(byProv).sort().map(k=>line(k,byProv[k])).join('');
+        const grand=`<tr class="bd-total"><td>Grand total</td><td class="num">${claims.length}</td><td class="num">$${n2(tSub)}</td><td class="num">$${n2(tGst)}</td><td class="num">$${n2(tProv)}</td><td class="num">$${n2(tTot)}</td></tr>`;
+        const fc=claims.filter(r=>r.f.Flag).length;
+        document.getElementById('bdSummary').innerHTML=
+            `<div class="bd-meta">Period ${reconEsc(batchPeriod(f)||'—')} · Prepared by ${reconEsc(f.PreparedBy||'—')} · ${claims.length} receipts · ${fc} flagged · Status: <b>${reconEsc(f.Status||'')}</b>${f.ApprovedBy?` · Approved by ${reconEsc(f.ApprovedBy)} (${(f.ApprovedAt||'').slice(0,10)})`:''}</div>`+
+            `<div class="bd-card"><h4>Totals by category</h4><table class="bd-table"><thead><tr><th>Category</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${catRows}${grand}</tbody></table></div>`+
+            `<div class="bd-card"><h4>Totals by province</h4><table class="bd-table"><thead><tr><th>Province</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${provRows}</tbody></table></div>`+
+            `<div class="bd-card"><h4>Rebate &amp; notes</h4>GST rebate (50%): <b>$${n2(tGst*0.5)}</b><br>${f.AccountantNotes?('Notes from Emmanuel: '+reconEsc(f.AccountantNotes)):'No accountant notes.'}${f.ReturnNotes?('<br>Return notes: '+reconEsc(f.ReturnNotes)):''}</div>`;
+        renderBatchReceipts();
+        const st=(f.Status||'').toLowerCase();
+        let a=`<button class="btn btn-outline btn-sm" id="bdFlagBtn" onclick="toggleBdFlagged()">View flagged only</button>`+
+              `<button class="btn btn-outline btn-sm" onclick="window.print()">Print</button>`;
+        if(st==='pending_approval'){
+            a+=`<button class="btn btn-outline btn-sm" style="border-color:#a11111;color:#a11111;" onclick="returnBatch('${b.id}')">Return to Emmanuel</button>`+
+               `<button class="btn btn-success btn-sm" onclick="approveBatch('${b.id}')">Approve</button>`;
+        }
+        a+=`<button class="btn btn-primary btn-sm" onclick="closeBatchDetail()">Close</button>`;
+        document.getElementById('bdActions').innerHTML=a;
+    }
+
+    function renderBatchReceipts(){
+        let rows=_bdClaims; if(_bdFlaggedOnly) rows=rows.filter(r=>r.f.Flag);
+        const money=v=>{const n=parseFloat(v);return isNaN(n)?'':'$'+n.toFixed(2);};
+        const body=rows.map(r=>{const x=r.f;return `<tr><td>${reconEsc(x.ReceiptRef)}</td><td>${reconEsc((x.ReceiptDate||'').slice(0,10))}</td><td>${reconEsc(x.Vendor)}</td><td>${reconEsc(x.Province)}</td><td>${reconEsc(x.SubmittedBy)}</td><td>${reconEsc(x.CategoryLabel)}</td><td class="num">${money(x.GSTAmount)}</td><td class="num">${money(x.TotalAmount)}</td><td class="appr-flag">${reconEsc(x.Flag)}</td></tr>`;}).join('');
+        document.getElementById('bdReceipts').innerHTML=`<div class="bd-card"><h4>Receipts (${rows.length})</h4><table class="bd-table"><thead><tr><th>Ref</th><th>Date</th><th>Vendor</th><th>Prov</th><th>Submitter</th><th>Category</th><th class="num">GST</th><th class="num">Total</th><th>Flag</th></tr></thead><tbody>${body||'<tr><td colspan="9" class="recon-empty">None.</td></tr>'}</tbody></table></div>`;
+    }
+    function toggleBdFlagged(){ _bdFlaggedOnly=!_bdFlaggedOnly; renderBatchReceipts(); const btn=document.getElementById('bdFlagBtn'); if(btn) btn.textContent=_bdFlaggedOnly?'Show all':'View flagged only'; }
+
+    async function batchPatch(id, fields){
+        await refreshAccessToken();
+        const site=await graphSite();
+        const listId=await graphListId(site.id, CONFIG.receiptBatchesList);
+        const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items/${id}/fields`,{
+            method:'PATCH', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':'application/json'}, body:JSON.stringify(fields)});
+        if(!res.ok) throw new Error('batch PATCH '+res.status);
+    }
+
+    async function approveBatch(batchId){
+        const b=batchAll.find(x=>x.id===batchId); if(!b) return;
+        if(!confirm(`Approve batch ${b.f.BatchRef||''}? This marks all ${_bdClaims.length} receipt(s) approved.`)) return;
+        const who=(currentUser&&(currentUser.name||currentUser.username))||'', now=new Date().toISOString();
+        try{
+            await batchPatch(b.id, {Status:'approved', ApprovedBy:who, ApprovedAt:now});
+            for(const r of _bdClaims){ await reconPatch(r.id, {Status:'approved', ApprovedBy:who, ApprovedAt:now}); }
+            b.f.Status='approved'; b.f.ApprovedBy=who; b.f.ApprovedAt=now;
+            showToast(`Batch ${b.f.BatchRef||''} approved.`); closeBatchDetail(); renderBatches();
+        }catch(e){ console.error(e); showToast('Approve failed — '+e.message); }
+    }
+
+    async function returnBatch(batchId){
+        const b=batchAll.find(x=>x.id===batchId); if(!b) return;
+        const notes=prompt('Return to Emmanuel — what needs fixing?', '');
+        if(notes===null) return;
+        try{
+            await batchPatch(b.id, {Status:'returned', ReturnNotes:notes});
+            // Free the receipts (clear BatchRef, back to reconciled) so Emmanuel can fix and re-batch.
+            for(const r of _bdClaims){ await reconPatch(r.id, {BatchRef:'', Status:'reconciled'}); }
+            b.f.Status='returned'; b.f.ReturnNotes=notes;
+            showToast(`Batch ${b.f.BatchRef||''} returned to Emmanuel.`); closeBatchDetail(); renderBatches();
+        }catch(e){ console.error(e); showToast('Return failed — '+e.message); }
     }
 
     // Init
