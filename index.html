@@ -2766,7 +2766,7 @@
                 <img src="${URL.createObjectURL(blob)}" alt="Additional page ${i + 2}">
                 <button type="button" class="addl-thumb-remove" title="Remove"
                         onclick="removeAdditionalImage(${i})">&times;</button>
-                <div class="addl-thumb-label">${i === 0 ? 'Invoice' : 'Page ' + (i + 2)}</div>
+                <div class="addl-thumb-label">${i === 0 ? 'Invoice / page 2' : 'Page ' + (i + 2)}</div>
             </div>`).join('');
     }
 
@@ -3009,6 +3009,7 @@
             const safeEmployee = submittedBy.replace(/[^a-zA-Z0-9 _-]/g, '');
             let receiptUrl = '';
             let additionalUrls = [];   // sharing links for invoice / extra pages
+            let extrasFailed = 0;      // count of extra-page uploads that failed this attempt
             let createdRef = null;
 
             // Upload one blob to the receipt folder and return its org sharing
@@ -3041,13 +3042,16 @@
                 const uploadPath = `Travel Receipts/${date}/${safeEmployee}/${ref}.jpg`;
 
                 if (!receiptUrl) {
+                    // Fresh per (re)upload so a ReceiptRef-race retry can't append a
+                    // second copy of every extra page.
+                    additionalUrls = []; extrasFailed = 0;
                     receiptUrl = await uploadOne(receiptImageBlob, uploadPath);
                     // Additional pages are numbered -2.jpg, -3.jpg, … alongside the
                     // primary. Uploaded once (guarded by receiptUrl), same as the primary.
                     for (let i = 0; i < receiptAdditionalBlobs.length; i++) {
                         const addlPath = `Travel Receipts/${date}/${safeEmployee}/${ref}-${i + 2}.jpg`;
                         const u = await uploadOne(receiptAdditionalBlobs[i], addlPath);
-                        if (u) additionalUrls.push(u);
+                        if (u) additionalUrls.push(u); else extrasFailed++;
                     }
                 }
 
@@ -3081,6 +3085,12 @@
                 // never touch the column. If the column isn't provisioned yet,
                 // self-heal: drop TipAmount, flag the item, and still save.
                 if (num(tip) > 0) fields.TipAmount = num(tip);
+                // An extra page failed to upload — the accountant needs every invoice
+                // page to approve, so flag it rather than silently dropping it.
+                if (extrasFailed > 0) {
+                    const failNote = `${extrasFailed} extra image(s) failed to upload — please re-submit this receipt.`;
+                    fields.Flag = fields.Flag ? `${fields.Flag}; ${failNote}` : failNote;
+                }
 
                 const postItem = (f) => fetch(
                     `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items`,
@@ -3126,8 +3136,9 @@
 
             document.getElementById('successFlowType').textContent = 'receipt';
             document.getElementById('successHeading').textContent = 'Receipt Submitted';
-            document.getElementById('successMessage').textContent =
-                `Saved as ${createdRef}. It'll appear in the reconciliation queue for review.`;
+            document.getElementById('successMessage').textContent = extrasFailed > 0
+                ? `Saved as ${createdRef}, but ${extrasFailed} extra image(s) didn't upload — please re-submit this receipt so the invoice page(s) attach.`
+                : `Saved as ${createdRef}. It'll appear in the reconciliation queue for review.`;
             document.getElementById('successBackBtn').textContent = 'Submit Another Receipt';
             document.getElementById('receiptCaptureView').style.display = 'none';
             document.getElementById('successScreen').style.display = 'flex';
