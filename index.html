@@ -832,6 +832,10 @@
         table.bd-table td.num, table.bd-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
         table.bd-table tr.bd-total td { font-weight:700; border-top:2px solid #ccc; }
         .appr-flag { color:#a11111; font-weight:600; }
+        .rv-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; font-size:14px; }
+        .rv-grid > div { display:flex; flex-direction:column; }
+        .rv-grid label { font-size:11px; color:var(--text-light); text-transform:uppercase; letter-spacing:.03em; }
+        .rv-grid .rv-full { grid-column:1 / -1; }
         @media print {
             body * { visibility:hidden; }
             #batchDetailModal, #batchDetailModal * { visibility:visible; }
@@ -1407,6 +1411,20 @@
         <div id="bdSummary"></div>
         <div id="bdReceipts"></div>
         <div id="bdActions" style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap;"></div>
+    </div>
+</div>
+
+<!-- Single Receipt view (image + full details) — opened from a batch's receipt list -->
+<div id="receiptViewModal" class="modal-overlay" style="z-index:600;">
+    <div class="modal-content" style="max-width:840px; max-height:90vh; overflow:auto;">
+        <h3 id="rvTitle">Receipt</h3>
+        <div style="display:flex; gap:20px; flex-wrap:wrap;">
+            <div id="rvImage" style="flex:0 0 340px; max-width:340px;"></div>
+            <div id="rvDetails" style="flex:1 1 300px;"></div>
+        </div>
+        <div style="display:flex; justify-content:flex-end; margin-top:14px;">
+            <button class="btn btn-primary btn-sm" onclick="closeReceiptView()">Close</button>
+        </div>
     </div>
 </div>
 
@@ -3299,8 +3317,8 @@
 
     // Fetch the receipt image via the Graph shares API (the stored ReceiptImageURL
     // is a sharing link, not a direct image src).
-    async function loadReceiptImage(rec){
-        const box=document.getElementById('img-'+rec.id); if(!box) return;
+    async function loadReceiptImage(rec, boxId){
+        const box=document.getElementById(boxId||('img-'+rec.id)); if(!box) return;
         const url=rec.f.ReceiptImageURL;
         if(!url){ box.innerHTML='<div class="recon-noimg">No image link on this receipt.</div>'; return; }
         try{
@@ -3647,10 +3665,35 @@
     function renderBatchReceipts(){
         let rows=_bdClaims; if(_bdFlaggedOnly) rows=rows.filter(r=>r.f.Flag);
         const money=v=>{const n=parseFloat(v);return isNaN(n)?'':'$'+n.toFixed(2);};
-        const body=rows.map(r=>{const x=r.f;return `<tr><td>${reconEsc(x.ReceiptRef)}</td><td>${reconEsc((x.ReceiptDate||'').slice(0,10))}</td><td>${reconEsc(x.Vendor)}</td><td>${reconEsc(x.Province)}</td><td>${reconEsc(x.SubmittedBy)}</td><td>${reconEsc(x.CategoryLabel)}</td><td class="num">${money(x.GSTAmount)}</td><td class="num">${money(x.TotalAmount)}</td><td class="appr-flag">${reconEsc(x.Flag)}</td></tr>`;}).join('');
-        document.getElementById('bdReceipts').innerHTML=`<div class="bd-card"><h4>Receipts (${rows.length})</h4><table class="bd-table"><thead><tr><th>Ref</th><th>Date</th><th>Vendor</th><th>Prov</th><th>Submitter</th><th>Category</th><th class="num">GST</th><th class="num">Total</th><th>Flag</th></tr></thead><tbody>${body||'<tr><td colspan="9" class="recon-empty">None.</td></tr>'}</tbody></table></div>`;
+        const body=rows.map(r=>{const x=r.f;return `<tr class="main-row" onclick="viewBatchReceipt('${r.id}')"><td>${reconEsc(x.ReceiptRef)}</td><td>${reconEsc((x.ReceiptDate||'').slice(0,10))}</td><td>${reconEsc(x.Vendor)}</td><td>${reconEsc(x.Province)}</td><td>${reconEsc(x.SubmittedBy)}</td><td>${reconEsc(x.CategoryLabel)}</td><td>${reconEsc(x.Description)}</td><td class="num">${money(x.GSTAmount)}</td><td class="num">${money(x.TotalAmount)}</td><td class="appr-flag">${reconEsc(x.Flag)}</td></tr>`;}).join('');
+        document.getElementById('bdReceipts').innerHTML=`<div class="bd-card"><h4>Receipts (${rows.length}) <span style="font-weight:400;color:var(--text-light);font-size:12px;">— click a row to view the receipt image</span></h4><table class="bd-table"><thead><tr><th>Ref</th><th>Date</th><th>Vendor</th><th>Prov</th><th>Submitter</th><th>Category</th><th>Note</th><th class="num">GST</th><th class="num">Total</th><th>Flag</th></tr></thead><tbody>${body||'<tr><td colspan="10" class="recon-empty">None.</td></tr>'}</tbody></table></div>`;
     }
     function toggleBdFlagged(){ _bdFlaggedOnly=!_bdFlaggedOnly; renderBatchReceipts(); const btn=document.getElementById('bdFlagBtn'); if(btn) btn.textContent=_bdFlaggedOnly?'Show all':'View flagged only'; }
+
+    // View a single receipt (image + full details incl. the note) from a batch — for approval verification.
+    function viewBatchReceipt(id){
+        const r=_bdClaims.find(x=>x.id===id); if(!r) return;
+        const f=r.f, money=v=>{const n=parseFloat(v);return isNaN(n)?'—':'$'+n.toFixed(2);};
+        document.getElementById('rvTitle').textContent=`${f.ReceiptRef||'Receipt'} — ${f.Vendor||''}`;
+        document.getElementById('rvDetails').innerHTML=
+            `<div class="rv-grid">`+
+            `<div><label>Date</label>${reconEsc((f.ReceiptDate||'').slice(0,10))||'—'}</div>`+
+            `<div><label>Province</label>${reconEsc(f.Province)||'—'}</div>`+
+            `<div><label>Submitter</label>${reconEsc(f.SubmittedBy)||'—'}</div>`+
+            `<div><label>Category</label>${reconEsc(f.CategoryLabel)||'—'}</div>`+
+            `<div><label>Subtotal</label>${money(f.Subtotal)}</div>`+
+            `<div><label>GST</label>${money(f.GSTAmount)}</div>`+
+            `<div><label>Provincial tax</label>${money(f.ProvincialTax)}</div>`+
+            `<div><label>Tip</label>${money(f.TipAmount)}</div>`+
+            `<div><label>Total</label>${money(f.TotalAmount)}</div>`+
+            `<div class="rv-full"><label>Note</label>${f.Description?reconEsc(f.Description):'<span style="color:var(--text-light)">(none)</span>'}</div>`+
+            (f.Flag?`<div class="rv-full"><label>Flag</label><span class="appr-flag">${reconEsc(f.Flag)}</span></div>`:'')+
+            `</div>`;
+        document.getElementById('rvImage').innerHTML='<div class="recon-noimg">Loading image…</div>';
+        document.getElementById('receiptViewModal').classList.add('active');
+        loadReceiptImage(r, 'rvImage');
+    }
+    function closeReceiptView(){ document.getElementById('receiptViewModal').classList.remove('active'); }
 
     async function batchPatch(id, fields){
         await refreshAccessToken();

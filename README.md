@@ -141,6 +141,9 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-07-02 (Approval — receipt notes + image verification)
+- Per Chris/Bernie: the approver needs the submitter's **note** (e.g. who a hospitality meeting was with) to approve. The batch-detail receipts list now shows a **Note** column by default, and **clicking any receipt row opens a view popover** with the receipt **image** (Graph `/shares`) + all extracted details incl. the full note — for approval verification (completes spec §9.2 "expandable to see receipt image + extracted data"). `loadReceiptImage` refactored to take an optional target element for reuse.
+
 ### 2026-06-19 (Phase 4 — review hardening)
 - Adversarial review of the approval flow → fixes: **approve/return are now ordered receipts-first, batch-status-last** with per-receipt try/catch + idempotent skip, so a mid-loop Graph failure leaves the batch still-pending and retryable (no half-approved limbo); a **live status re-check** guards against double-approve / stale-tab re-actioning; the **batch-detail modal always shows a Close button** even if the receipt load fails (no dead-end); `createBatch` reports any receipts that didn't attach instead of silently under-batching; and the **print CSS** resets `overflow/height` so long batches paginate instead of truncating to one page. (Deferred: wiring the unused `exported` batch status.)
 
