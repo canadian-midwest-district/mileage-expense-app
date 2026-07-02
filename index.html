@@ -695,6 +695,60 @@
             background: #fafafa;
         }
 
+        /* Additional-image thumbnails on the verify step */
+        .addl-thumbs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .addl-thumbs:empty { margin-bottom: 0; }
+        .addl-thumb {
+            position: relative;
+            width: 84px;
+        }
+        .addl-thumb img {
+            width: 84px;
+            height: 84px;
+            object-fit: cover;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #fafafa;
+            display: block;
+        }
+        .addl-thumb-remove {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: none;
+            background: var(--danger);
+            color: #fff;
+            font-size: 16px;
+            line-height: 1;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+        }
+        .addl-thumb-label {
+            font-size: 11px;
+            color: var(--text-light);
+            text-align: center;
+            margin-top: 4px;
+        }
+
+        /* Multi-image gallery in the console (recon expand + approval popover) */
+        .receipt-gallery { display: flex; flex-direction: column; gap: 12px; }
+        .receipt-gallery-item .gallery-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: .03em;
+            margin-bottom: 4px;
+        }
+
         .receipt-reading {
             text-align: center;
             padding: 48px 20px;
@@ -1308,6 +1362,19 @@
                 <label>Note (optional)</label>
                 <textarea id="rcDescription" placeholder="What was this for?"></textarea>
             </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title" style="margin-bottom:6px;">Add invoice / extra page (optional)</div>
+            <p style="color:var(--text-light); font-size:13px; margin-bottom:14px;">
+                If the receipt doesn't itemize what was bought (e.g. a restaurant slip),
+                attach the itemized invoice or extra pages so the accountant can verify the items and tax.
+            </p>
+            <div id="receiptAdditionalThumbs" class="addl-thumbs"></div>
+            <label class="btn btn-outline" for="receiptAdditionalPhoto">📎 Add image</label>
+            <input type="file" id="receiptAdditionalPhoto" class="receipt-file-input"
+                   accept="image/*" capture="environment" multiple
+                   onchange="onAdditionalPhotoChosen(this)">
         </div>
 
         <button class="btn btn-success" id="rcSubmitBtn" onclick="submitReceipt()">Submit Receipt</button>
@@ -2559,6 +2626,7 @@
 
     // ========== RECEIPT CAPTURE (View A) ==========
     let receiptImageBlob = null;       // compressed JPEG ready for OCR + upload
+    let receiptAdditionalBlobs = [];   // extra pages (invoice, itemized bill…) — uploaded alongside, not OCR'd
     let receiptCategories = [];        // active quick-pick tiles
     let receiptOtherCategories = [];   // search-only (IsActive=false) categories — spec §7.2 "Other…"
     let selectedReceiptCategory = null; // chosen { label, glCode, icon }
@@ -2602,10 +2670,14 @@
 
     function resetReceiptCapture() {
         receiptImageBlob = null;
+        receiptAdditionalBlobs = [];
         selectedReceiptCategory = null;
         document.getElementById('receiptOtherPicker').style.display = 'none';
         document.getElementById('receiptSelectedChip').style.display = 'none';
         document.getElementById('receiptPhoto').value = '';
+        const addlInput = document.getElementById('receiptAdditionalPhoto');
+        if (addlInput) addlInput.value = '';
+        renderAdditionalThumbs();
         document.getElementById('receiptReviewBanner').style.display = 'none';
         ['rcVendor', 'rcDate', 'rcSubtotal', 'rcGst', 'rcProvincialTax', 'rcTip', 'rcTotal', 'rcDescription']
             .forEach(id => { document.getElementById(id).value = ''; });
@@ -2662,6 +2734,40 @@
     function retakeReceipt() {
         document.getElementById('receiptPhoto').value = '';
         showReceiptStep('receiptStepCapture');
+    }
+
+    // Additional images (invoice / itemized bill / extra pages). Compressed the
+    // same way as the primary receipt and uploaded alongside it — never OCR'd.
+    async function onAdditionalPhotoChosen(input) {
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
+        for (const file of files) {
+            try {
+                receiptAdditionalBlobs.push(await compressImage(file));
+            } catch (err) {
+                showToast('Could not process one of the photos. Try again.');
+                console.error(err);
+            }
+        }
+        input.value = '';   // allow re-picking the same file
+        renderAdditionalThumbs();
+    }
+
+    function removeAdditionalImage(i) {
+        receiptAdditionalBlobs.splice(i, 1);
+        renderAdditionalThumbs();
+    }
+
+    function renderAdditionalThumbs() {
+        const wrap = document.getElementById('receiptAdditionalThumbs');
+        if (!wrap) return;
+        wrap.innerHTML = receiptAdditionalBlobs.map((blob, i) =>
+            `<div class="addl-thumb">
+                <img src="${URL.createObjectURL(blob)}" alt="Additional page ${i + 2}">
+                <button type="button" class="addl-thumb-remove" title="Remove"
+                        onclick="removeAdditionalImage(${i})">&times;</button>
+                <div class="addl-thumb-label">${i === 0 ? 'Invoice' : 'Page ' + (i + 2)}</div>
+            </div>`).join('');
     }
 
     async function continueReceipt() {
@@ -2902,32 +3008,46 @@
             // on a duplicate ReceiptRef (race with another submitter).
             const safeEmployee = submittedBy.replace(/[^a-zA-Z0-9 _-]/g, '');
             let receiptUrl = '';
+            let additionalUrls = [];   // sharing links for invoice / extra pages
             let createdRef = null;
+
+            // Upload one blob to the receipt folder and return its org sharing
+            // link (falling back to the raw webUrl). Shared by the primary
+            // receipt and every additional page.
+            const uploadOne = async (blob, path) => {
+                const uploadRes = await fetch(
+                    `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/root:/${path}:/content`,
+                    {
+                        method: 'PUT',
+                        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'image/jpeg' },
+                        body: blob
+                    });
+                if (!uploadRes.ok) return '';
+                const uploaded = await uploadRes.json();
+                try {
+                    const linkRes = await fetch(
+                        `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/items/${uploaded.id}/createLink`,
+                        {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ type: 'view', scope: 'organization' })
+                        });
+                    return linkRes.ok ? ((await linkRes.json()).link?.webUrl || uploaded.webUrl) : uploaded.webUrl;
+                } catch { return uploaded.webUrl; }
+            };
 
             for (let attempt = 0; attempt < 2; attempt++) {
                 const ref = await nextReceiptRef(site.id, listId);
                 const uploadPath = `Travel Receipts/${date}/${safeEmployee}/${ref}.jpg`;
 
                 if (!receiptUrl) {
-                    const uploadRes = await fetch(
-                        `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/root:/${uploadPath}:/content`,
-                        {
-                            method: 'PUT',
-                            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'image/jpeg' },
-                            body: receiptImageBlob
-                        });
-                    if (uploadRes.ok) {
-                        const uploaded = await uploadRes.json();
-                        try {
-                            const linkRes = await fetch(
-                                `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/items/${uploaded.id}/createLink`,
-                                {
-                                    method: 'POST',
-                                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ type: 'view', scope: 'organization' })
-                                });
-                            receiptUrl = linkRes.ok ? ((await linkRes.json()).link?.webUrl || uploaded.webUrl) : uploaded.webUrl;
-                        } catch { receiptUrl = uploaded.webUrl; }
+                    receiptUrl = await uploadOne(receiptImageBlob, uploadPath);
+                    // Additional pages are numbered -2.jpg, -3.jpg, … alongside the
+                    // primary. Uploaded once (guarded by receiptUrl), same as the primary.
+                    for (let i = 0; i < receiptAdditionalBlobs.length; i++) {
+                        const addlPath = `Travel Receipts/${date}/${safeEmployee}/${ref}-${i + 2}.jpg`;
+                        const u = await uploadOne(receiptAdditionalBlobs[i], addlPath);
+                        if (u) additionalUrls.push(u);
                     }
                 }
 
@@ -2953,6 +3073,10 @@
                     ReceiptImageURL: receiptUrl,
                     Status: 'submitted'
                 };
+                // Invoice / extra pages, newline-joined. Primary stays in
+                // ReceiptImageURL so the single-image path is untouched — only
+                // send AdditionalImageURLs when there actually are extra pages.
+                if (additionalUrls.length) fields.AdditionalImageURLs = additionalUrls.join('\n');
                 // Only send TipAmount when there's a tip, so non-tip receipts
                 // never touch the column. If the column isn't provisioned yet,
                 // self-heal: drop TipAmount, flag the item, and still save.
@@ -2976,6 +3100,18 @@
                         delete fields.TipAmount;
                         const tipNote = `Tip $${num(tip).toFixed(2)} not saved — add a TipAmount column to the Receipt Claims list.`;
                         fields.Flag = fields.Flag ? `${fields.Flag}; ${tipNote}` : tipNote;
+                        createRes = await postItem(fields);
+                    }
+                }
+
+                if (!createRes.ok && fields.AdditionalImageURLs !== undefined) {
+                    const errText = await createRes.clone().text().catch(() => '');
+                    // AdditionalImageURLs column missing — the images are still in
+                    // SharePoint; save without the links and flag so they can be relinked.
+                    if (/AdditionalImageURLs/i.test(errText)) {
+                        delete fields.AdditionalImageURLs;
+                        const imgNote = `${additionalUrls.length} extra image(s) uploaded but not linked — add an AdditionalImageURLs column to the Receipt Claims list.`;
+                        fields.Flag = fields.Flag ? `${fields.Flag}; ${imgNote}` : imgNote;
                         createRes = await postItem(fields);
                     }
                 }
@@ -3315,20 +3451,47 @@
         document.getElementById('ed-ProvincialTax-'+id).value=prov2;
     }
 
-    // Fetch the receipt image via the Graph shares API (the stored ReceiptImageURL
-    // is a sharing link, not a direct image src).
+    // Fetch a single shared image (the stored URLs are sharing links, not direct
+    // src) and return an object-URL blob. Throws on failure so the caller can
+    // fall back to an "open in SharePoint" link for that one image.
+    async function fetchSharedImage(url){
+        const shareId='u!'+btoa(url).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
+        const res=await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem/content`,{ headers:{ 'Authorization':`Bearer ${accessToken}` } });
+        if(!res.ok) throw new Error('img '+res.status);
+        return URL.createObjectURL(await res.blob());
+    }
+
+    // Render the receipt image(s) into a box. Primary is ReceiptImageURL; any
+    // invoice / extra pages are newline-joined in AdditionalImageURLs. A single
+    // receipt renders exactly as before (labels only appear when there's >1).
     async function loadReceiptImage(rec, boxId){
         const box=document.getElementById(boxId||('img-'+rec.id)); if(!box) return;
-        const url=rec.f.ReceiptImageURL;
-        if(!url){ box.innerHTML='<div class="recon-noimg">No image link on this receipt.</div>'; return; }
+        const primary=rec.f.ReceiptImageURL;
+        const extra=(rec.f.AdditionalImageURLs||'').split('\n').map(s=>s.trim()).filter(Boolean);
+        if(!primary && !extra.length){ box.innerHTML='<div class="recon-noimg">No image link on this receipt.</div>'; return; }
+
+        // [url, label] pairs — labels only shown when there's more than one image.
+        const items=[];
+        if(primary) items.push([primary,'Receipt']);
+        extra.forEach((u,i)=>items.push([u, i===0?'Invoice / page 2':'Page '+(i+2)]));
+        const multi=items.length>1;
+
         try{
             await refreshAccessToken();
-            const shareId='u!'+btoa(url).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
-            const res=await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem/content`,{ headers:{ 'Authorization':`Bearer ${accessToken}` } });
-            if(!res.ok) throw new Error('img '+res.status);
-            const u=URL.createObjectURL(await res.blob());
-            box.innerHTML=`<a href="${u}" target="_blank" rel="noopener"><img src="${u}" class="recon-img" alt="receipt image"></a>`;
-        }catch(e){ console.error(e); box.innerHTML=`<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(url)}" target="_blank" rel="noopener">Open in SharePoint</a></div>`; }
+            const parts=await Promise.all(items.map(async ([url,label])=>{
+                try{
+                    const u=await fetchSharedImage(url);
+                    return `<div class="receipt-gallery-item">`+
+                        (multi?`<div class="gallery-label">${reconEsc(label)}</div>`:'')+
+                        `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" class="recon-img" alt="${reconEsc(label)}"></a></div>`;
+                }catch(e){ console.error(e);
+                    return `<div class="receipt-gallery-item">`+
+                        (multi?`<div class="gallery-label">${reconEsc(label)}</div>`:'')+
+                        `<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(url)}" target="_blank" rel="noopener">Open in SharePoint</a></div></div>`;
+                }
+            }));
+            box.innerHTML=multi?`<div class="receipt-gallery">${parts.join('')}</div>`:parts[0];
+        }catch(e){ console.error(e); box.innerHTML=`<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(primary||extra[0])}" target="_blank" rel="noopener">Open in SharePoint</a></div>`; }
     }
 
     async function saveReconRow(id){

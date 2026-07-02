@@ -141,6 +141,13 @@ After any code change, always complete the full cycle:
 
 ## Recent Changes
 
+### 2026-07-02 (Multi-image capture — receipt + invoice)
+- A submitter can now attach an **invoice / itemized bill / extra pages** to a claim alongside the primary receipt. Why: some receipts (e.g. a restaurant slip) don't list the items purchased, and Emmanuel needs the itemized invoice to verify what was bought and the true tax breakdown (some items are tax-exempt, so applying tax math to the total is sometimes wrong).
+  - **Capture (View A):** the verify step gains an **"Add invoice / extra page (optional)"** card — multi-select camera/file input, thumbnails with per-image remove, reusing `compressImage`. Extra blobs live in a `receiptAdditionalBlobs` array beside `receiptImageBlob`. OCR still runs on the **primary receipt only** (the invoice is for human verification). A plain single-receipt submit is unchanged.
+  - **Submit:** each extra image uploads to `Travel Receipts/{date}/{safeEmployee}/{REF}-2.jpg`, `-3.jpg`, … (shared upload helper `uploadOne`), org sharing links are newline-joined into the new **`AdditionalImageURLs`** column; the primary stays in `ReceiptImageURL`. `AdditionalImageURLs` is only sent when extras exist, and self-heals (flag, don't fail) if the column is missing — mirroring the `TipAmount` pattern.
+  - **Display everywhere:** `loadReceiptImage` now renders the primary **plus** each `AdditionalImageURLs` link as a labeled vertical gallery ("Receipt", "Invoice / page 2", …). Both the reconciliation row-expand (`img-<id>`) and the approval popover (`rvImage`) get it for free since both route through `loadReceiptImage`. A single-image receipt renders exactly as before (no labels, no gallery wrapper). `fetchSharedImage` extracted for per-image `/shares` fetch with per-image SharePoint fallback.
+  - Storage column `AdditionalImageURLs` (multiline text) was pre-provisioned on the `Receipt Claims` list (2026-07-02).
+
 ### 2026-07-02 (Approval — receipt notes + image verification)
 - Per Chris/Bernie: the approver needs the submitter's **note** (e.g. who a hospitality meeting was with) to approve. The batch-detail receipts list now shows a **Note** column by default, and **clicking any receipt row opens a view popover** with the receipt **image** (Graph `/shares`) + all extracted details incl. the full note — for approval verification (completes spec §9.2 "expandable to see receipt image + extracted data"). `loadReceiptImage` refactored to take an optional target element for reuse.
 
