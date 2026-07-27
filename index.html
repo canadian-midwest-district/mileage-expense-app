@@ -926,6 +926,7 @@
         receiptCategoryList: 'Receipt Category Quick Picks',
         // OCR endpoint (receipt-processor Vercel project, deployed 2026-06-14).
         receiptOcrUrl: 'https://receipt-processor-eight.vercel.app/api/process-receipt',
+        receiptIngestUrl: 'https://receipt-processor-eight.vercel.app/api/ingest-mail',
         // Entra security groups for receipt role routing (created 2026-06-16, spec §4).
         receiptGroups: {
             submitters: '8765a926-e6c4-4349-be0a-287ab0c137fa',
@@ -1398,6 +1399,7 @@
         <div>
             <span class="recon-count" id="reconCount"></span>
             <button class="btn btn-outline btn-sm" onclick="openApprovalDashboard()">Batches</button>
+            <button class="btn btn-outline btn-sm" id="btnIngestNow" onclick="runIngestNow()">&#9993; Ingest now</button>
             <button class="btn btn-outline btn-sm" onclick="loadReconciliation()">&#8635; Refresh</button>
             <span class="sign-out" onclick="signOut()" style="margin-left:12px;">Sign out</span>
         </div>
@@ -1407,12 +1409,14 @@
         <button class="recon-tab" data-status="submitted" onclick="setReconTab('submitted')">Submitted</button>
         <button class="recon-tab" data-status="reconciled" onclick="setReconTab('reconciled')">Reconciled</button>
         <button class="recon-tab" data-status="flagged" onclick="setReconTab('flagged')">Flagged</button>
+        <button class="recon-tab" data-status="email" onclick="setReconTab('email')">Emailed</button>
     </div>
     <div class="recon-filters">
         <div class="field"><label>From</label><input type="date" id="reconFrom" onchange="renderReconciliation()"></div>
         <div class="field"><label>To</label><input type="date" id="reconTo" onchange="renderReconciliation()"></div>
         <div class="field"><label>Submitter</label><select id="reconSubmitter" onchange="renderReconciliation()"><option value="">All</option></select></div>
         <div class="field"><label>Category</label><select id="reconCategory" onchange="renderReconciliation()"><option value="">All</option></select></div>
+        <div class="field"><label>Source</label><select id="reconSource" onchange="renderReconciliation()"><option value="">All</option><option value="email">Emailed in</option><option value="mobile">Phone capture</option></select></div>
         <div class="field"><button class="btn btn-outline btn-sm" onclick="clearReconFilters()">Clear filters</button></div>
     </div>
     <div class="recon-actionsbar">
@@ -2984,7 +2988,13 @@
         if (!receiptImageBlob) { showToast('Receipt photo is missing — please retake.'); return; }
 
         const cat = selectedReceiptCategory;
-        const submittedBy = currentUser.name || currentUser.username;
+        // Collapse whitespace: some AAD display names carry a double space
+        // ("Richard  Enns"), and this value is written to SubmittedBy, which the
+        // journal-entry generator uses to pick the cardholder's GL credit
+        // account. cardAccountFor's regex tolerates it today, but an exact
+        // lookup against `Receipt Sender Map` would not. Fixing it here rather
+        // than in AAD, which would change how he appears tenant-wide.
+        const submittedBy = String(currentUser.name || currentUser.username || '').replace(/\s+/g, ' ').trim();
         const num = v => isNaN(v) ? 0 : Math.round(v * 100) / 100;
 
         const btn = document.getElementById('rcSubmitBtn');
@@ -3162,6 +3172,7 @@
         { key:'CategoryLabel', label:'Category' }, { key:'Subtotal', label:'Subtotal', num:true },
         { key:'GSTAmount', label:'GST', num:true }, { key:'ProvincialTax', label:'Prov Tax', num:true },
         { key:'TipAmount', label:'Tip', num:true }, { key:'TotalAmount', label:'Total', num:true },
+        { key:'IngestSource', label:'Source' },
         { key:'Flag', label:'Flag' },
     ];
     // Provincial rate by province for inline recompute; GST is always 5% (spec §5.4).
@@ -3181,6 +3192,59 @@
         try { await loadReceiptCategories(); } catch (e) { /* category dropdowns degrade gracefully */ }
         populateReconCategoryControls();
         await loadReconciliation();
+    }
+
+    // --- E4: manual trigger for the emailed-receipt ingest (spec §12.9) ------
+    // Without this, a receipt forwarded at 09:00 doesn't appear until the next
+    // morning's cron and Emmanuel is blocked waiting on it.
+    //
+    // NOTE ON AUTH: this page is served publicly from expenses.canadianmidwest.ca,
+    // so the ingest shared secret must never appear in this file. We send the
+    // signed-in user's own Graph access token instead; the endpoint verifies it
+    // by calling Graph with it and checks the UPN against its own allowlist.
+    async function runIngestNow(){
+        const btn=document.getElementById('btnIngestNow');
+        if(btn){ btn.disabled=true; btn.textContent='Ingesting…'; }
+        try{
+            const res=await fetch(CONFIG.receiptIngestUrl,{
+                method:'POST',
+                headers:{ 'Authorization':`Bearer ${accessToken}` }
+            });
+            const txt=await res.text();
+            let d={}; try{ d=JSON.parse(txt); }catch{}
+            if(!res.ok){
+                if(res.status===403) showToast('You are not permitted to run the mail ingest.');
+                else if(res.status===401) showToast('Sign-in expired — please reload and try again.');
+                else showToast(d.error||`Ingest failed (${res.status}).`);
+                return;
+            }
+            showIngestSummary(d);
+            await loadReconciliation();
+        }catch(e){
+            console.error(e);
+            showToast('Could not reach the ingest service.');
+        }finally{
+            if(btn){ btn.disabled=false; btn.innerHTML='&#9993; Ingest now'; }
+        }
+    }
+
+    // The counts that matter operationally: what landed, what was held back and
+    // needs a human decision, and what failed to read. Quarantined mail is NOT
+    // an error — it is mail from an address that isn't on the sender map, and
+    // somebody has to either add the address or ignore it.
+    function showIngestSummary(d){
+        const parts=[];
+        parts.push(`${d.ingested||0} ingested`);
+        if(d.failed) parts.push(`${d.failed} unreadable`);
+        if(d.quarantined) parts.push(`${d.quarantined} quarantined (sender not on the map)`);
+        if(d.skippedDuplicateMessage) parts.push(`${d.skippedDuplicateMessage} already processed`);
+        if(d.flaggedPossibleDuplicate) parts.push(`${d.flaggedPossibleDuplicate} flagged as possible duplicates`);
+        if(d.repliesFailed) parts.push(`${d.repliesFailed} confirmation replies failed`);
+        if((d.errors||[]).length) parts.push(`${d.errors.length} error(s)`);
+        const scanned=d.scanned||0;
+        showToast(scanned===0 ? 'No new mail in the receipts inbox.' : `Scanned ${scanned}: ${parts.join(' · ')}`);
+        if((d.errors||[]).length) console.warn('ingest errors', d.errors);
+        if((d.claims||[]).length) console.info('ingested claims', d.claims);
     }
 
     async function loadReconciliation(){
@@ -3227,17 +3291,24 @@
         renderReconciliation();
     }
     function clearReconFilters(){
-        ['reconFrom','reconTo','reconSubmitter','reconCategory'].forEach(id=>document.getElementById(id).value='');
+        ['reconFrom','reconTo','reconSubmitter','reconCategory','reconSource'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
         renderReconciliation();
     }
 
     function filteredRecon(){
         const from=document.getElementById('reconFrom').value, to=document.getElementById('reconTo').value;
         const sub=document.getElementById('reconSubmitter').value, cat=document.getElementById('reconCategory').value;
+        const src=(document.getElementById('reconSource')||{}).value||'';
         return reconAll.filter(r=>{
             const f=r.f, st=(f.Status||'submitted').toLowerCase();
             if(reconStatus==='flagged'){ if(!f.Flag) return false; }
+            // §12.1: the email review gate keys on IngestSource, NOT Flag. Flag
+            // already means "the arithmetic needed recomputing" and fires on
+            // every tax-inclusive receipt, so overloading it would make an
+            // unreviewed emailed claim indistinguishable from a fine one.
+            else if(reconStatus==='email'){ if((f.IngestSource||'')!=='email') return false; }
             else if(reconStatus!=='all'){ if(st!==reconStatus) return false; }
+            if(src && (f.IngestSource||'mobile')!==src) return false;
             if(sub && f.SubmittedBy!==sub) return false;
             if(cat && f.CategoryLabel!==cat) return false;
             const d=(f.ReceiptDate||'').slice(0,10);
@@ -3289,6 +3360,7 @@
                 <td class="num">${money(f.ProvincialTax)}</td>
                 <td class="num">${money(f.TipAmount)}</td>
                 <td class="num">${money(f.TotalAmount)}</td>
+                <td>${(f.IngestSource||'mobile')==='email'?'&#9993; Email':'&#128241; Phone'}</td>
                 <td class="flag-cell">${reconEsc(f.Flag)}</td>
             </tr>`;
         }).join('');
