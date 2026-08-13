@@ -775,6 +775,41 @@
             margin-bottom: 16px;
         }
 
+        /* Date sanity check (§5.5). Deliberately louder than .review-banner:
+           that one is advice, this one blocks the submit button. A receipt
+           whose date is months from its submission is usually a D/M vs M/D
+           misread, and a wrong date silently drops the claim out of Emmanuel's
+           reconciliation range — nothing downstream catches it. */
+        .date-check {
+            background: #fdecea;
+            border: 1px solid #e0928a;
+            border-radius: 8px;
+            padding: 12px 14px;
+            font-size: 13px;
+            color: #6b1d13;
+            margin: -8px 0 16px;
+        }
+        .date-check p { margin: 0 0 10px; line-height: 1.45; }
+        .date-check .dc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .date-check button {
+            flex: 1 1 auto;
+            min-height: 44px;
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 6px;
+            border: 1px solid #b3261e;
+            background: #fff;
+            color: #b3261e;
+            cursor: pointer;
+        }
+        .date-check button.dc-primary { background: #b3261e; color: #fff; }
+        .date-check.dc-confirmed {
+            background: #edf7ed;
+            border-color: #94c894;
+            color: #1e4620;
+        }
+
         .amount-row { display: flex; gap: 12px; }
         .amount-row .field { flex: 1; margin-bottom: 16px; }
 
@@ -1308,8 +1343,9 @@
             </div>
             <div class="field">
                 <label>Date</label>
-                <input type="date" id="rcDate">
+                <input type="date" id="rcDate" onchange="onReceiptDateChanged()">
             </div>
+            <div id="rcDateCheck" class="date-check" style="display:none;"></div>
             <div class="field">
                 <label>Province (where purchased)</label>
                 <select id="rcProvince"></select>
@@ -2683,6 +2719,11 @@
         if (addlInput) addlInput.value = '';
         renderAdditionalThumbs();
         document.getElementById('receiptReviewBanner').style.display = 'none';
+        // Clear the date check too, or the next receipt inherits the last one's
+        // confirmation and the guard silently does nothing.
+        document.getElementById('rcDateCheck').style.display = 'none';
+        receiptDateCheck = null;
+        receiptDateConfirmed = false;
         ['rcVendor', 'rcDate', 'rcSubtotal', 'rcGst', 'rcProvincialTax', 'rcTip', 'rcTotal', 'rcDescription']
             .forEach(id => { document.getElementById(id).value = ''; });
         showReceiptStep('receiptStepCapture');
@@ -2781,7 +2822,13 @@
         try {
             const fd = new FormData();
             fd.append('receipt', receiptImageBlob, 'receipt.jpg');
-            const res = await fetch(CONFIG.receiptOcrUrl, { method: 'POST', body: fd });
+            // Send OUR local date, not the server's. The function runs in UTC,
+            // so after 18:00 Regina the server's "today" is already tomorrow and
+            // the 14-day window would be measured off by a day.
+            const ocrUrl = CONFIG.receiptOcrUrl +
+                (CONFIG.receiptOcrUrl.includes('?') ? '&' : '?') +
+                'submitted_on=' + localToday();
+            const res = await fetch(ocrUrl, { method: 'POST', body: fd });
             if (!res.ok) throw new Error('OCR_HTTP_' + res.status);
             data = await res.json();
         } catch (err) {
@@ -2792,6 +2839,112 @@
         }
         populateReceiptForm(data || {});
         showReceiptStep('receiptStepVerify');
+    }
+
+    // --- receipt date sanity check (§5.5) ----------------------------------
+    //
+    // Two receipts in the July batch (Wal-Mart, Boston Pizza) printed the date
+    // M/D/Y on a Canadian till. Read as D/M/Y they landed months off, and
+    // because a wrong-but-valid date looks like every other date, nothing
+    // downstream disagreed — they simply were not in the range Emmanuel scoped
+    // for reconciliation. The only reliable signal is the gap between the
+    // receipt date and the day it is being submitted, so that is what we check,
+    // and we ask the submitter rather than silently correcting: an old receipt
+    // is a real thing, and only the person holding it knows which it is.
+
+    const DATE_WINDOW_DAYS = 14;
+    let receiptDateCheck = null;      // the server's assessment, if any
+    let receiptDateConfirmed = false; // the submitter has explicitly said "yes, that date"
+
+    /** Today in the DEVICE's timezone. `toISOString()` would give UTC. */
+    function localToday() {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function daysFromToday(iso) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return null;
+        const a = Date.parse(iso + 'T12:00:00Z');
+        const b = Date.parse(localToday() + 'T12:00:00Z');
+        if (!isFinite(a) || !isFinite(b)) return null;
+        return Math.round((b - a) / 86400000);
+    }
+
+    function fmtDate(iso) {
+        const d = new Date(iso + 'T12:00:00Z');
+        return isFinite(d) ? d.toLocaleDateString(undefined,
+            { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : iso;
+    }
+
+    /**
+     * Re-evaluated against whatever is in the field RIGHT NOW, not against the
+     * value the OCR returned — the submitter may have typed a correction, and
+     * a warning that outlives the problem is one people learn to click through.
+     * The suggested swap still comes from the server, which is the only side
+     * that saw how the date was actually printed.
+     */
+    function renderDateCheck() {
+        const box = document.getElementById('rcDateCheck');
+        const current = document.getElementById('rcDate').value;
+        const delta = daysFromToday(current);
+
+        if (delta === null || Math.abs(delta) <= DATE_WINDOW_DAYS) {
+            box.style.display = 'none';
+            box.className = 'date-check';
+            receiptDateConfirmed = true; // nothing to confirm
+            return;
+        }
+
+        if (receiptDateConfirmed) {
+            box.style.display = 'block';
+            box.className = 'date-check dc-confirmed';
+            box.innerHTML = `<p>Date confirmed as <strong>${reEsc(fmtDate(current))}</strong>.</p>`;
+            return;
+        }
+
+        const dir = delta > 0 ? 'ago' : 'in the future';
+        const n = Math.abs(delta);
+        // Only offer the swap when the server found one AND it is a swap away
+        // from the date currently in the field.
+        const alt = (receiptDateCheck && receiptDateCheck.status === 'swap-likely' &&
+            receiptDateCheck.alternate && receiptDateCheck.date === current)
+            ? receiptDateCheck.alternate : null;
+
+        box.style.display = 'block';
+        box.className = 'date-check';
+        box.innerHTML =
+            `<p>This receipt is dated <strong>${reEsc(fmtDate(current))}</strong> — ${n} days ${dir}.` +
+            (alt
+                ? ` The date printed on it can also be read as <strong>${reEsc(fmtDate(alt))}</strong>
+                    (some tills print month/day rather than day/month).`
+                : ``) +
+            ` Please check the receipt before submitting.</p>` +
+            `<div class="dc-actions">` +
+            (alt ? `<button type="button" class="dc-primary" onclick="useAlternateDate('${reEsc(alt)}')">Use ${reEsc(fmtDate(alt))}</button>` : ``) +
+            `<button type="button" onclick="confirmReceiptDate()">The date is correct</button>` +
+            `</div>`;
+    }
+
+    function reEsc(s) {
+        return String(s).replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function useAlternateDate(iso) {
+        document.getElementById('rcDate').value = iso;
+        receiptDateConfirmed = false;
+        renderDateCheck();
+    }
+
+    function confirmReceiptDate() {
+        receiptDateConfirmed = true;
+        renderDateCheck();
+    }
+
+    /** A hand-edited date is a NEW claim about the date, so it re-arms the check. */
+    function onReceiptDateChanged() {
+        receiptDateConfirmed = false;
+        renderDateCheck();
     }
 
     function populateReceiptForm(data) {
@@ -2813,6 +2966,10 @@
         document.getElementById('rcTip').value = num(data.tip);
         document.getElementById('rcTotal').value = num(data.total);
         document.getElementById('rcDescription').value = data.description || '';
+
+        receiptDateCheck = data.date_assessment || null;
+        receiptDateConfirmed = false;
+        renderDateCheck();
 
         const banner = document.getElementById('receiptReviewBanner');
         if (data.needs_review || !data.province || data.confidence === 'low') {
@@ -2983,6 +3140,15 @@
 
         if (!vendor) { showToast('Please enter the vendor.'); return; }
         if (!date) { showToast('Please enter the date.'); return; }
+        // §5.5 — a date far from today is unconfirmed until the submitter says
+        // so. Re-render first, so the prompt is showing when the toast explains
+        // why nothing happened.
+        renderDateCheck();
+        if (!receiptDateConfirmed) {
+            document.getElementById('rcDateCheck').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            showToast('Please confirm the receipt date before submitting.');
+            return;
+        }
         if (isNaN(total) || total <= 0) { showToast('Please enter the total amount.'); return; }
         if (!selectedReceiptCategory) { showToast('Please pick a category.'); return; }
         if (!receiptImageBlob) { showToast('Receipt photo is missing — please retake.'); return; }
