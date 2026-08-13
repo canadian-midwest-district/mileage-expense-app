@@ -959,6 +959,7 @@
         receiptClaimsList: 'Receipt Claims',
         receiptBatchesList: 'Receipt Batches',
         receiptCategoryList: 'Receipt Category Quick Picks',
+        receiptSenderMapList: 'Receipt Sender Map',
         // OCR endpoint (receipt-processor Vercel project, deployed 2026-06-14).
         receiptOcrUrl: 'https://receipt-processor-eight.vercel.app/api/process-receipt',
         receiptIngestUrl: 'https://receipt-processor-eight.vercel.app/api/ingest-mail',
@@ -3429,6 +3430,7 @@
                 url = d['@odata.nextLink'] || null;
             }
             reconAll = rows;
+            await loadCardAccounts();
             populateReconFilters();
             renderReconciliation();
         } catch (err) {
@@ -3885,13 +3887,79 @@
     // receipt: 0.5×GST → 2082; subtotal+provincialTax+tip+other-0.5×GST → expense
     // account (receipt's category GL); total → cardholder's RBC card account.
     const CARD_NAMES = { '2071':'RBC Credit Card - Bob', '2072':'RBC Credit Card - Chris', '2073':'RBC Credit Card - Richard', '2076':'RBC Credit Card - Bernie' };
-    function cardAccountFor(name){
-        const n=(name||'').toLowerCase();
+
+    // Cardholder -> CardGL, read from `Receipt Sender Map` (the same list the
+    // email ingest attributes from). Populated by loadCardAccounts().
+    //
+    // This used to be a hardcoded regex over four names, which meant adding a
+    // cardholder was a CODE change in two places that could silently disagree:
+    // the list said one account and the journal entry used another. The list is
+    // now authoritative, so onboarding someone is a data edit — fill in CardGL
+    // and the JE picks it up on the next load, no deploy.
+    let CARD_GL_BY_HOLDER = {};
+    // Whether the list read actually succeeded. This is the difference between
+    // "not on the list" and "we could not read the list", and it decides
+    // whether the legacy roster is allowed to answer at all. See cardAccountFor().
+    let CARD_GL_LOADED = false;
+
+    const holderKey = (name) => String(name||'').toLowerCase().replace(/\s+/g,' ').trim();
+
+    async function loadCardAccounts(){
+        try {
+            const site = await graphSite();
+            const listId = await graphListId(site.id, CONFIG.receiptSenderMapList);
+            const res = await fetch(
+                `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items?$expand=fields&$top=200`,
+                { headers:{ 'Authorization':`Bearer ${accessToken}` } });
+            const d = await res.json();
+            const map = {};
+            (d.value||[]).forEach(it => {
+                const f = it.fields || {};
+                // A blank CardGL is a real, expected state — someone is on the
+                // list before Emmanuel has given us their account. Skip it here
+                // so it falls through to the warning rather than mapping to ''.
+                if (f.Cardholder && f.CardGL) map[holderKey(f.Cardholder)] = String(f.CardGL).trim();
+            });
+            CARD_GL_BY_HOLDER = map;
+            CARD_GL_LOADED = true;
+        } catch (err) {
+            CARD_GL_LOADED = false;
+            // Non-fatal: cardAccountFor() falls back to the legacy roster, so a
+            // failed read degrades to the old behaviour instead of blanking
+            // every card line on the journal entry.
+            console.warn('Card accounts: using fallback roster —', err.message);
+        }
+    }
+
+    // Legacy roster. Kept ONLY as a fallback for a failed list read; it is not
+    // extended for new cardholders — put them on `Receipt Sender Map` instead.
+    function legacyCardAccountFor(n){
         if(/keith|(^|\s)bob(\s|$)/.test(n)) return '2071';
         if(/smith|chris/.test(n)) return '2072';
         if(/enns|richard/.test(n)) return '2073';
         if(/walle|bernie/.test(n)) return '2076';
         return '';
+    }
+
+    /**
+     * The cardholder's GL credit account, or '' when we genuinely do not know.
+     *
+     * The legacy roster is consulted ONLY when the list could not be read. That
+     * distinction is load-bearing, not tidiness: the roster matches on surname,
+     * so `/enns|richard/` maps "Merinda Enns" to 2073 — RICHARD's card. Before
+     * the sender gate was widened to district domains only mapped people could
+     * submit, so that never fired. Now anyone on a district domain can, and a
+     * surname collision would credit a colleague's card with no error anywhere.
+     *
+     * So: if the list loaded and the person is not on it, the answer is ''. The
+     * journal entry then warns and omits the credit line, which is loud and
+     * correctable. A wrong account number is neither.
+     */
+    function cardAccountFor(name){
+        const hit = CARD_GL_BY_HOLDER[holderKey(name)];
+        if (hit) return hit;
+        if (CARD_GL_LOADED) return '';
+        return legacyCardAccountFor(String(name||'').toLowerCase());
     }
     const r2 = x => Math.round(x*100)/100;
 
@@ -3911,7 +3979,7 @@
             if(expAcct){ expense[expAcct]=expense[expAcct]||{name:f.CategoryLabel||'',amt:0}; expense[expAcct].amt=r2(expense[expAcct].amt+expAmt); }
             else warnings.push(`${f.ReceiptRef||'?'}: no expense account (set a category)`);
             if(card){ cards[card]=cards[card]||{name:CARD_NAMES[card]||('Card '+card),amt:0}; cards[card].amt=r2(cards[card].amt+total); }
-            else warnings.push(`${f.ReceiptRef||'?'}: no card account for “${f.SubmittedBy||'?'}”`);
+            else warnings.push(`${f.ReceiptRef||'?'}: no card account for “${f.SubmittedBy||'?'}” — set CardGL on the Receipt Sender Map`);
         });
         const lines=[];
         if(gst2082>0) lines.push({acct:'2082', name:'GST Paid', debit:gst2082, credit:0});
