@@ -1810,9 +1810,9 @@
             resetDistrictForm();
             document.getElementById('vehicleSelectScreen').style.display = 'flex';
         } else if (flow === 'receipt') {
-            resetReceiptCapture();
-            document.getElementById('receiptCaptureView').style.display = 'none';
-            document.getElementById('vehicleSelectScreen').style.display = 'flex';
+            // "Submit Another Receipt" means exactly that — start a fresh capture
+            // rather than dropping back to the menu for a second tap.
+            chooseSubmitReceipt();
         } else {
             resetForm();
         }
