@@ -882,6 +882,17 @@
         .status-approved { background:#eef7e7; color:#5a7c10; }
         .status-exported { background:#eeeeee; color:#555; }
         .status-returned { background:#fde7e7; color:#a11111; }
+        /* Void: the record survives, it just stops counting. Measured 8.5:1 on
+           its own band (AA needs 4.5:1 for 11px text). */
+        .status-void { background:#f3e8e8; color:#7a2020; }
+        /* A voided row stays legible — greyed out is how you get 3:1 text. We
+           mute it with a strikethrough on the ref and a left rule instead. */
+        tr.main-row.is-void > td { background:#fbf6f6; }
+        tr.main-row.is-void > td:nth-child(2) { border-left:3px solid #a11111; }
+        .void-reason { white-space:normal; max-width:280px; color:#7a2020; }
+        .void-banner { grid-column:1 / -1; background:#f3e8e8; border:1px solid #e3c9c9; border-radius:8px;
+                       padding:10px 12px; font-size:13px; color:#7a2020; line-height:1.5; }
+        .void-banner b { color:#7a2020; }
         .flag-cell { color:#a11111; font-weight:600; white-space:normal; }
         .recon-prov-select { padding:2px 4px; border:1px solid var(--border); border-radius:4px; font-family:inherit; font-size:12px; }
         .btn-sm { padding:6px 12px; font-size:13px; }
@@ -1447,6 +1458,7 @@
         <button class="recon-tab" data-status="reconciled" onclick="setReconTab('reconciled')">Reconciled</button>
         <button class="recon-tab" data-status="flagged" onclick="setReconTab('flagged')">Flagged</button>
         <button class="recon-tab" data-status="email" onclick="setReconTab('email')">Emailed</button>
+        <button class="recon-tab" data-status="void" onclick="setReconTab('void')">Voided</button>
     </div>
     <div class="recon-filters">
         <div class="field"><label>From</label><input type="date" id="reconFrom" onchange="renderReconciliation()"></div>
@@ -1475,6 +1487,7 @@
         </label>
         <button class="btn btn-outline btn-sm" onclick="bulkApplyCategory()">Apply category</button>
         <button class="btn btn-outline btn-sm" onclick="bulkMarkReconciled()">Mark reconciled</button>
+        <button class="btn btn-outline btn-sm" id="reconBulkVoidBtn" style="border-color:#a11111;color:#a11111;" onclick="bulkVoid()">Void…</button>
         <button class="btn btn-outline btn-sm" onclick="clearReconSelection()">Clear selection</button>
     </div>
     <div class="recon-table-wrap">
@@ -3342,6 +3355,100 @@
         { key:'IngestSource', label:'Source' },
         { key:'Flag', label:'Flag' },
     ];
+    // Shown only on the Voided tab. Kept OUT of RECON_COLS because the row
+    // renderer writes hardcoded <td>s: any column added to one list and not
+    // the other shifts every cell by one, silently. reconCols() and the row
+    // template both branch on the SAME boolean, and reconAssertColParity()
+    // checks the two agreed at render time.
+    const VOID_COLS = [
+        { key:'VoidedBy', label:'Voided by' },
+        { key:'VoidedAt', label:'Voided' },
+        { key:'VoidReason', label:'Reason' },
+    ];
+    const showingVoidTab = () => reconStatus === 'void';
+    function reconCols(){ return showingVoidTab() ? RECON_COLS.concat(VOID_COLS) : RECON_COLS; }
+
+    // ---- Void (task #772) --------------------------------------------------
+    // Richard entered a receipt by mistake and Emmanuel had no way to take it
+    // out of the period. Chris's ruling (2026-09-17): VOID, never delete. The
+    // list item and its SharePoint receipt image both survive; the claim simply
+    // stops counting anywhere downstream. No Graph DELETE is issued here.
+    //
+    // `Status` is a CHOICE column on `Receipt Claims` with allowTextEntry:false,
+    // so 'void' had to be added to its choice list before this could write at
+    // all (done via Graph 2026-09-17). If it ever goes missing the PATCH fails
+    // loudly rather than half-voiding something — see voidPatchFields().
+    const VOID_STATUS = 'void';
+    const isVoided = f => String((f||{}).Status||'').toLowerCase() === VOID_STATUS;
+    const isVoidRow = r => isVoided(r && r.f);
+
+    // Who may void. There is no per-action accountant gate anywhere else in
+    // this console — the boundary is the VIEW (routeReceiptViews), and it fails
+    // OPEN when /me/memberOf can't be read, because the SPA app only holds
+    // User.Read and that call can 403. We keep the same posture rather than
+    // invent a stricter one here: anyone who reached this dashboard already has
+    // edit, reconcile and batch-create power over the same rows, so gating only
+    // Void would be theatre that could strand Emmanuel mid-soak. An explicit
+    // non-accountant (accountant === false) never gets here at all.
+    function canVoid(){ return receiptRoles.accountant !== false; }
+
+    // The status a restore puts back. PreVoidStatus is the record of it and is
+    // written at void time; the derivation is the fallback for a claim voided
+    // before that column existed, or voided while the column was missing.
+    // Only 'submitted' and 'reconciled' are reachable: 'approved' claims carry
+    // a BatchRef and are refused by voidBlockReason(), and returnBatch() puts a
+    // returned claim back to 'reconciled' before it is ever voidable.
+    function priorStatusFor(f){
+        const stored = String(f.PreVoidStatus||'').trim().toLowerCase();
+        if (stored && stored !== VOID_STATUS) return stored;
+        return f.ReconciledAt ? 'reconciled' : 'submitted';
+    }
+
+    // Why this claim can't be voided, or '' if it can.
+    // A BatchRef means it is sitting in a batch Bernie has either been asked to
+    // approve or has already approved; voiding it there would change the batch
+    // total under him with nothing to show for it. createBatch() stamps the ref,
+    // returnBatch() clears it, and approveBatch() LEAVES it set — so a non-empty
+    // BatchRef covers pending and approved alike, which is what we want.
+    function voidBlockReason(f){
+        if (isVoided(f)) return 'already void';
+        const ref = (f.BatchRef||'').trim();
+        if (ref) return `in batch ${ref} — return the batch first, then void`;
+        return '';
+    }
+
+    // Re-read one claim's live Status + BatchRef straight from SharePoint.
+    // The console tab can sit open for hours; acting on the array we loaded at
+    // 9am is how you void something Bernie approved at 11.
+    async function liveClaimFields(id){
+        await refreshAccessToken();
+        const site=await graphSite();
+        const listId=await graphListId(site.id, CONFIG.receiptClaimsList);
+        const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items/${id}?$expand=fields`,
+            { headers:{ 'Authorization':`Bearer ${accessToken}`, 'Cache-Control':'no-cache' }, cache:'no-store' });
+        if(!res.ok) throw new Error('GET '+res.status);
+        return (await res.json()).fields || {};
+    }
+
+    // PATCH a void, degrading the way the TipAmount / AdditionalImageURLs writes
+    // do: if one of the audit columns is missing from the list, drop it, note it
+    // and still record the void. Status is NOT droppable — a claim with no
+    // status change is not voided, so that failure is reported, not swallowed.
+    async function voidPatch(id, fields){
+        const audit = ['VoidedBy','VoidedAt','VoidReason','PreVoidStatus'];
+        const payload = Object.assign({}, fields);
+        const dropped = [];
+        for(let attempt=0; attempt<=audit.length; attempt++){
+            try{ await reconPatch(id, payload); return dropped; }
+            catch(e){
+                const msg = String(e && e.message || '');
+                const hit = audit.find(k => payload[k] !== undefined && new RegExp(k,'i').test(msg));
+                if(!hit) throw e;             // not a missing-column problem — real failure
+                delete payload[hit]; dropped.push(hit);
+            }
+        }
+        throw new Error('void PATCH failed after dropping '+dropped.join(', '));
+    }
     // Provincial rate by province for inline recompute; GST is always 5% (spec §5.4).
     const PROVINCE_PROV_RATE = { SK:0.06, MB:0.07, BC:0.07, AB:0.00, ON:0.08, NB:0.10, NS:0.10, NL:0.10, PE:0.10, QC:0.09975 };
 
@@ -3469,6 +3576,12 @@
         const src=(document.getElementById('reconSource')||{}).value||'';
         return reconAll.filter(r=>{
             const f=r.f, st=(f.Status||'submitted').toLowerCase();
+            // #772: the ONE place a voided claim leaves the queue. It is first
+            // so it also governs the Flagged and Emailed tabs, which key on
+            // Flag / IngestSource rather than on status and would otherwise
+            // keep showing a voided receipt.
+            if(showingVoidTab()){ if(st!==VOID_STATUS) return false; }
+            else if(st===VOID_STATUS) return false;
             if(reconStatus==='flagged'){ if(!f.Flag) return false; }
             // §12.1: the email review gate keys on IngestSource, NOT Flag. Flag
             // already means "the arithmetic needed recomputing" and fires on
@@ -3488,14 +3601,17 @@
 
     function renderReconciliation(){
         const head=document.getElementById('reconHead'), body=document.getElementById('reconBody');
-        const COLSPAN = RECON_COLS.length + 1;
-        head.innerHTML='<tr><th class="chk"><input type="checkbox" id="reconSelAll" onclick="toggleSelectAll(this)"></th>'+RECON_COLS.map(c=>{
+        const cols = reconCols(), showVoid = showingVoidTab();
+        const COLSPAN = cols.length + 1;
+        const vb=document.getElementById('reconBulkVoidBtn');
+        if(vb) vb.style.display = (canVoid() && !showVoid) ? '' : 'none';
+        head.innerHTML='<tr><th class="chk"><input type="checkbox" id="reconSelAll" onclick="toggleSelectAll(this)"></th>'+cols.map(c=>{
             const arrow = reconSort.key===c.key ? `<span class="arrow">${reconSort.dir>0?'▲':'▼'}</span>` : '';
             return `<th class="${c.num?'num':''}" onclick="setReconSort('${c.key}')">${c.label} ${arrow}</th>`;
         }).join('')+'</tr>';
 
         const rows=filteredRecon();
-        const k=reconSort.key, dir=reconSort.dir, numeric=!!RECON_COLS.find(c=>c.key===k)?.num;
+        const k=reconSort.key, dir=reconSort.dir, numeric=!!cols.find(c=>c.key===k)?.num;
         rows.sort((a,b)=>{
             let va=a.f[k], vb=b.f[k];
             if(numeric){ return ((parseFloat(va)||0)-(parseFloat(vb)||0))*dir; }
@@ -3504,7 +3620,9 @@
         });
 
         document.getElementById('reconCount').textContent = `${rows.length} receipt${rows.length===1?'':'s'}`;
-        const totGst = rows.reduce((a,r)=>a+(parseFloat(r.f.GSTAmount)||0),0);
+        // The rebate card is a claim against CRA — it counts live receipts only,
+        // so on the Voided tab it reads $0.00 rather than the voided GST.
+        const totGst = rows.filter(r=>!isVoidRow(r)).reduce((a,r)=>a+(parseFloat(r.f.GSTAmount)||0),0);
         const gEl=document.getElementById('rebateGst'), aEl=document.getElementById('rebateAmt');
         if(gEl) gEl.textContent='$'+totGst.toFixed(2);
         if(aEl) aEl.textContent='$'+(totGst*0.5).toFixed(2);
@@ -3514,7 +3632,12 @@
             const f=r.f, st=(f.Status||'submitted').toLowerCase();
             const provOpts=['',...RECEIPT_PROVINCES].map(p=>`<option value="${p}"${p===(f.Province||'')?' selected':''}>${p||'—'}</option>`).join('');
             const checked=reconSelected.has(r.id)?' checked':'';
-            return `<tr class="main-row" id="row-${r.id}" onclick="toggleReconRow('${r.id}', event)">
+            const voided=isVoided(f);
+            const voidCells = showVoid
+                ? `<td>${reconEsc(f.VoidedBy)}</td><td>${reconEsc((f.VoidedAt||'').slice(0,10))}</td>`+
+                  `<td class="void-reason">${reconEsc(f.VoidReason)}</td>`
+                : '';
+            return `<tr class="main-row${voided?' is-void':''}" id="row-${r.id}" onclick="toggleReconRow('${r.id}', event)">
                 <td class="chk" onclick="event.stopPropagation()"><input type="checkbox"${checked} onchange="toggleReconSelect('${r.id}')"></td>
                 <td><span class="status-badge status-${st}">${reconEsc(f.Status||'submitted')}</span></td>
                 <td>${reconEsc(f.ReceiptRef)}</td>
@@ -3529,10 +3652,23 @@
                 <td class="num">${money(f.TipAmount)}</td>
                 <td class="num">${money(f.TotalAmount)}</td>
                 <td>${(f.IngestSource||'mobile')==='email'?'&#9993; Email':'&#128241; Phone'}</td>
-                <td class="flag-cell">${reconEsc(f.Flag)}</td>
+                <td class="flag-cell">${reconEsc(f.Flag)}</td>${voidCells}
             </tr>`;
         }).join('');
+        reconAssertColParity();
         updateBulkBar();
+    }
+
+    // Header cells and body cells are built from two different pieces of code
+    // (a map over reconCols(), and a hardcoded <td> template). A column added to
+    // one and not the other shifts every value one place to the left and nothing
+    // errors — so check they agreed, every render.
+    function reconAssertColParity(){
+        const th=document.querySelectorAll('#reconHead th').length;
+        const firstRow=document.querySelector('#reconBody tr.main-row');
+        if(!firstRow) return;
+        const td=firstRow.children.length;
+        if(th!==td) console.error(`recon table column mismatch: ${th} header cells vs ${td} body cells`);
     }
 
     // Inline province correction recomputes the GST/provincial split from the
@@ -3540,6 +3676,7 @@
     async function changeReconProvince(id, province){
         const rec=reconAll.find(r=>r.id===id); if(!rec) return;
         const f=rec.f;
+        if(isVoided(f)){ showToast('That receipt is void — restore it first to edit it.'); renderReconciliation(); return; }
         const total=parseFloat(f.TotalAmount)||0, tip=parseFloat(f.TipAmount)||0;
         const taxable=Math.max(0, total-tip);
         let subtotal, gst, prov;
@@ -3617,7 +3754,8 @@
         const gl=document.getElementById('reconBulkCat').value;
         if(!gl){ showToast('Pick a category first.'); return; }
         const cat=allReconCats().find(c=>c.glCode===gl); if(!cat) return;
-        const ids=[...reconSelected]; if(!ids.length) return;
+        const ids=[...reconSelected].filter(id=>!isVoidRow(reconAll.find(r=>r.id===id)));
+        if(!ids.length){ showToast('Nothing to update — voided receipts are skipped.'); return; }
         showToast(`Updating ${ids.length}…`);
         try{
             for(const id of ids){
@@ -3630,7 +3768,11 @@
     }
 
     async function bulkMarkReconciled(){
-        const ids=[...reconSelected]; if(!ids.length) return;
+        // A voided claim must not come back through the reconcile door — that
+        // would clear the void by writing Status without clearing the audit
+        // fields, leaving a receipt that counts again and still reads "voided by".
+        const ids=[...reconSelected].filter(id=>!isVoidRow(reconAll.find(r=>r.id===id)));
+        if(!ids.length){ showToast('Nothing to reconcile — voided receipts are skipped. Restore one from the Voided tab first.'); return; }
         const who=(currentUser&&(currentUser.name||currentUser.username))||'';
         const now=new Date().toISOString();
         showToast(`Marking ${ids.length} reconciled…`);
@@ -3653,7 +3795,7 @@
         const rec=reconAll.find(r=>r.id===id); if(!rec) return;
         const mainRow=document.getElementById('row-'+id); if(!mainRow) return;
         const tr=document.createElement('tr'); tr.className='recon-detail'; tr.id='detail-'+id;
-        const td=document.createElement('td'); td.colSpan=RECON_COLS.length+1;
+        const td=document.createElement('td'); td.colSpan=reconCols().length+1;
         td.innerHTML=reconDetailHTML(rec);
         tr.appendChild(td); mainRow.after(tr);
         loadReceiptImage(rec);
@@ -3661,6 +3803,31 @@
 
     function reconDetailHTML(rec){
         const f=rec.f, id=rec.id;
+        // A voided claim opens read-only with its audit trail. Editing it would
+        // be editing a record that is out of the period by definition; the only
+        // action offered is putting it back.
+        if(isVoided(f)){
+            const when=(f.VoidedAt||'').slice(0,10);
+            return `<div class="recon-detail-grid">
+            <div class="recon-detail-img" id="img-${id}"><div class="recon-noimg">Loading image…</div></div>
+            <div class="recon-form">
+                <div class="void-banner">
+                    <b>Voided</b>${f.VoidedBy?` by ${reconEsc(f.VoidedBy)}`:''}${when?` on ${reconEsc(when)}`:''}.<br>
+                    Reason: ${f.VoidReason?reconEsc(f.VoidReason):'<i>(none recorded)</i>'}<br>
+                    This receipt is excluded from the queue, the totals, the GST rebate, the RC4034 export,
+                    batch creation and the journal entry. The record and its image are untouched in SharePoint.
+                </div>
+                <div class="fld"><label>Ref</label><div>${reconEsc(f.ReceiptRef)||'—'}</div></div>
+                <div class="fld"><label>Vendor</label><div>${reconEsc(f.Vendor)||'—'}</div></div>
+                <div class="fld"><label>Date</label><div>${reconEsc((f.ReceiptDate||'').slice(0,10))||'—'}</div></div>
+                <div class="fld"><label>Total paid</label><div>${(()=>{const n=parseFloat(f.TotalAmount);return isNaN(n)?'—':'$'+n.toFixed(2);})()}</div></div>
+                <div class="recon-form-actions">
+                    ${canVoid()?`<button class="btn btn-success btn-sm" onclick="restoreVoided('${id}')">Restore to ${reconEsc(priorStatusFor(f))}</button>`:''}
+                    <button class="btn btn-outline btn-sm" onclick="toggleReconRow('${id}')">Close</button>
+                </div>
+            </div>
+        </div>`;
+        }
         const provOpts=['',...RECEIPT_PROVINCES].map(p=>`<option value="${p}"${p===(f.Province||'')?' selected':''}>${p||'— unknown —'}</option>`).join('');
         const v=k=>reconEsc(f[k]==null?'':f[k]);
         const n=k=>{ const x=parseFloat(f[k]); return isNaN(x)?'':x; };
@@ -3682,6 +3849,7 @@
                 <div class="recon-form-actions">
                     <button class="btn btn-success btn-sm" onclick="saveReconRow('${id}')">Save changes</button>
                     <button class="btn btn-outline btn-sm" onclick="markReconciledRow('${id}')">Mark reconciled</button>
+                    ${canVoid()?`<button class="btn btn-outline btn-sm" style="border-color:#a11111;color:#a11111;" onclick="voidRow('${id}')">Void…</button>`:''}
                     <button class="btn btn-outline btn-sm" onclick="toggleReconRow('${id}')">Close</button>
                 </div>
             </div>
@@ -3747,6 +3915,7 @@
 
     async function saveReconRow(id){
         const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        if(isVoidRow(rec)){ showToast('That receipt is void — restore it first to edit it.'); return; }
         const num=el=>{ const x=parseFloat(document.getElementById(el).value); return isNaN(x)?0:Math.round(x*100)/100; };
         const gl=document.getElementById('ed-Category-'+id).value;
         const cat=allReconCats().find(c=>c.glCode===gl);
@@ -3772,6 +3941,7 @@
 
     async function markReconciledRow(id){
         const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        if(isVoidRow(rec)){ showToast('That receipt is void — restore it first.'); return; }
         const who=(currentUser&&(currentUser.name||currentUser.username))||''; const now=new Date().toISOString();
         try{
             await reconPatch(id, { Status:'reconciled', ReconciledBy:who, ReconciledAt:now });
@@ -3779,6 +3949,120 @@
             showToast(`${rec.f.ReceiptRef||'Receipt'} reconciled.`);
             renderReconciliation();
         }catch(e){ console.error(e); showToast('Could not reconcile — reloading.'); loadReconciliation(); }
+    }
+
+    // ---- Void / restore (task #772) ----------------------------------------
+    // Voiding is the only way to take a mis-entered receipt out of a period, so
+    // it is deliberately awkward: a typed reason, a confirmation naming the
+    // receipts and the money, and a live status re-check per item before the
+    // write. Ordering follows the 2026-06-19 approval hardening — per-item
+    // try/catch, idempotent skip, nothing aborts the loop.
+
+    // Ask once for a reason covering the whole action. Returns null if cancelled
+    // or left blank; a void with no reason is an unexplained hole in a period.
+    function askVoidReason(n){
+        const reason=prompt(
+            `Void ${n} receipt${n===1?'':'s'} — why? (recorded against the receipt, required)`, '');
+        if(reason===null) return null;
+        const r=reason.trim();
+        if(r.length<3){ showToast('A reason is required to void — nothing was changed.'); return null; }
+        return r;
+    }
+
+    // Void one or more claims. `recs` are the in-memory rows; every one is
+    // re-read live before it is touched.
+    async function voidClaims(recs, reason){
+        const who=(currentUser&&(currentUser.name||currentUser.username))||'';
+        // VoidedAt is an instant, not a calendar date — it records when someone
+        // clicked, the way ReconciledAt/ApprovedAt do. The noon-Central rule
+        // applies to date-only fields (ReceiptDate, PeriodStart/End), where a
+        // UTC midnight would roll the day back; stamping a real event at noon
+        // would just make it say the wrong time.
+        const now=new Date().toISOString();
+        const done=[], skipped=[], failed=[], degraded=new Set();
+        for(const r of recs){
+            let live;
+            try{ live=await liveClaimFields(r.id); }
+            catch(e){ console.error(e); failed.push(`${r.f.ReceiptRef||r.id} (couldn't verify status)`); continue; }
+            Object.assign(r.f, live);                       // the tab was stale; catch it up either way
+            const block=voidBlockReason(live);
+            if(block==='already void'){ skipped.push(r.f.ReceiptRef||r.id); continue; }
+            if(block){ failed.push(`${r.f.ReceiptRef||r.id} (${block})`); continue; }
+            const fields={
+                Status: VOID_STATUS,
+                PreVoidStatus: String(live.Status||'submitted').toLowerCase(),
+                VoidedBy: who, VoidedAt: now, VoidReason: reason,
+            };
+            try{
+                (await voidPatch(r.id, fields)).forEach(k=>degraded.add(k));
+                Object.assign(r.f, fields);
+                done.push(r.f.ReceiptRef||r.id);
+            }catch(e){ console.error(e); failed.push(`${r.f.ReceiptRef||r.id} (${e.message})`); }
+        }
+        reconSelected.clear();
+        renderReconciliation();
+        const parts=[];
+        if(done.length) parts.push(`${done.length} voided`);
+        if(skipped.length) parts.push(`${skipped.length} already void`);
+        if(failed.length) parts.push(`not voided: ${failed.join(', ')}`);
+        showToast(parts.join(' · ')||'Nothing to void.');
+        if(degraded.size) showToast(`Void recorded, but ${[...degraded].join(', ')} didn't save — add those column(s) to the Receipt Claims list.`);
+    }
+
+    // Row-level void, from the expanded receipt.
+    async function voidRow(id){
+        if(!canVoid()){ showToast('Voiding is limited to the receipt accountant.'); return; }
+        const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        const block=voidBlockReason(rec.f);
+        if(block){ showToast(`Can't void ${rec.f.ReceiptRef||'this receipt'} — ${block}.`); return; }
+        const amt=parseFloat(rec.f.TotalAmount);
+        if(!confirm(`Void ${rec.f.ReceiptRef||'this receipt'}${rec.f.Vendor?` (${rec.f.Vendor}`:''}${isNaN(amt)?'':`, $${amt.toFixed(2)}`}${rec.f.Vendor?')':''}?\n\n`+
+                    `It drops out of the queue, the totals, the GST rebate, the RC4034 export, batch creation and the journal entry. `+
+                    `The record and the receipt image stay in SharePoint, and you can restore it from the Voided tab.`)) return;
+        const reason=askVoidReason(1); if(reason===null) return;
+        await voidClaims([rec], reason);
+    }
+
+    // Bulk void, from the selection bar.
+    async function bulkVoid(){
+        if(!canVoid()){ showToast('Voiding is limited to the receipt accountant.'); return; }
+        const recs=[...reconSelected].map(id=>reconAll.find(r=>r.id===id)).filter(Boolean);
+        if(!recs.length) return;
+        const blocked=recs.filter(r=>voidBlockReason(r.f) && voidBlockReason(r.f)!=='already void');
+        if(blocked.length){
+            showToast(`${blocked.length} of ${recs.length} can't be voided — ${blocked.map(r=>`${r.f.ReceiptRef||r.id}: ${voidBlockReason(r.f)}`).join('; ')}. Deselect them and try again.`);
+            return;
+        }
+        const total=recs.reduce((a,r)=>a+(parseFloat(r.f.TotalAmount)||0),0);
+        if(!confirm(`Void ${recs.length} receipt(s) totalling $${total.toFixed(2)}?\n\n`+
+                    `They drop out of the queue, the totals, the GST rebate, the RC4034 export, batch creation and the journal entry. `+
+                    `The records and images stay in SharePoint, and each one can be restored from the Voided tab.`)) return;
+        const reason=askVoidReason(recs.length); if(reason===null) return;
+        await voidClaims(recs, reason);
+    }
+
+    // Undo. The status put back is PreVoidStatus, written at void time; if that
+    // column was missing or empty we fall back to the derivation in
+    // priorStatusFor() — reconciled if the claim carries a ReconciledAt, else
+    // submitted. The audit fields are cleared so the row reads clean again; the
+    // void is still in the SharePoint item's version history.
+    async function restoreVoided(id){
+        if(!canVoid()){ showToast('Restoring is limited to the receipt accountant.'); return; }
+        const rec=reconAll.find(r=>r.id===id); if(!rec) return;
+        let live;
+        try{ live=await liveClaimFields(rec.id); }
+        catch(e){ console.error(e); showToast('Could not verify the receipt before restoring — '+e.message); return; }
+        Object.assign(rec.f, live);
+        if(!isVoided(live)){ showToast('That receipt is no longer void — refreshed.'); renderReconciliation(); return; }
+        const back=priorStatusFor(live);
+        if(!confirm(`Restore ${rec.f.ReceiptRef||'this receipt'} to "${back}"? It counts again from that moment.`)) return;
+        const fields={ Status:back, PreVoidStatus:'', VoidedBy:'', VoidedAt:null, VoidReason:'' };
+        try{
+            (await voidPatch(id, fields));
+            Object.assign(rec.f, fields);
+            showToast(`${rec.f.ReceiptRef||'Receipt'} restored to ${back}.`);
+            renderReconciliation();
+        }catch(e){ console.error(e); showToast('Restore failed — reloading. '+e.message); loadReconciliation(); }
     }
 
     // ---- Increment 3: batch creation, .IMP export, PSB rebate ----
@@ -3789,16 +4073,26 @@
     }
 
     // The selection if any rows are checked, otherwise the current filtered view.
+    // Voided claims are stripped from BOTH branches: filteredRecon() already
+    // drops them, but a selection made before voiding (or made on the Voided tab
+    // via select-all) survives a tab change, and this set feeds the journal
+    // entry and batch eligibility.
     function reconWorkingSet(){
-        return reconSelected.size ? reconAll.filter(r=>reconSelected.has(r.id)) : filteredRecon();
+        const set = reconSelected.size ? reconAll.filter(r=>reconSelected.has(r.id)) : filteredRecon();
+        return set.filter(r=>!isVoidRow(r));
     }
-    // Batch-eligible = reconciled and not already in a batch.
+    // Batch-eligible = reconciled and not already in a batch. A voided claim can
+    // hold neither of those, but say so explicitly — this is what stops a void
+    // from ever reaching Bernie.
     function batchEligible(){
-        return reconWorkingSet().filter(r => (r.f.Status||'').toLowerCase()==='reconciled' && !r.f.BatchRef);
+        return reconWorkingSet().filter(r => !isVoidRow(r) && (r.f.Status||'').toLowerCase()==='reconciled' && !r.f.BatchRef);
     }
 
     function exportRC4034(){
-        const recs=filteredRecon();
+        // This CSV backs a rebate claim to CRA, so the exclusion is restated here
+        // rather than relied on from filteredRecon() — on the Voided tab that
+        // would otherwise export exactly the receipts that must not be claimed.
+        const recs=filteredRecon().filter(r=>!isVoidRow(r));
         if(!recs.length){ showToast('Nothing to export in the current view.'); return; }
         let totGst=0, totReb=0;
         const body=recs.map(r=>{
@@ -3966,7 +4260,8 @@
     // Build a consolidated journal entry (lines grouped by account) for recs.
     function buildJournalEntry(recs){
         const expense={}, cards={}, warnings=[]; let gst2082=0;
-        recs.forEach(r=>{
+        // Restated at the posting layer: a voided receipt must never reach a GL.
+        recs.filter(r=>!isVoidRow(r)).forEach(r=>{
             const f=r.f;
             const gst=r2(parseFloat(f.GSTAmount)||0);
             const recover=r2(gst*0.5);
@@ -3987,7 +4282,7 @@
         Object.keys(cards).sort().forEach(a=>lines.push({acct:a, name:cards[a].name, debit:0, credit:cards[a].amt}));
         const totalDr=r2(lines.reduce((s,l)=>s+l.debit,0));
         const totalCr=r2(lines.reduce((s,l)=>s+l.credit,0));
-        return { lines, totalDr, totalCr, count:recs.length, warnings };
+        return { lines, totalDr, totalCr, count:recs.filter(r=>!isVoidRow(r)).length, warnings };
     }
 
     let _lastJE=null;
@@ -4090,7 +4385,9 @@
         document.getElementById('batchDetailModal').classList.add('active');
         try{
             const ref=b.f.BatchRef||'§none';
-            _bdClaims=(await loadListItems(CONFIG.receiptClaimsList)).filter(r=>(r.f.BatchRef||'')===ref);
+            // voidBlockReason() refuses to void anything holding a BatchRef, so a
+            // voided claim should never be in a batch — belt and braces anyway.
+            _bdClaims=(await loadListItems(CONFIG.receiptClaimsList)).filter(r=>(r.f.BatchRef||'')===ref && !isVoidRow(r));
             renderBatchDetail(b);
         }catch(e){ console.error(e);
             document.getElementById('bdSummary').innerHTML=`<div class="bd-meta">Could not load receipts: ${reconEsc(e.message)}</div>`;
