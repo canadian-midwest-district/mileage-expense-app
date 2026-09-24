@@ -879,7 +879,7 @@
         .status-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; text-transform:capitalize; }
         .status-submitted { background:#e7f1fb; color:#1F4E78; }
         .status-reconciled { background:#e7f6ec; color:#107c10; }
-        .status-approved { background:#eef7e7; color:#5a7c10; }
+        .status-approved { background:#eef7e7; color:#4d6b0d; }  /* was #5a7c10: 4.41:1, under AA at 11px (#797) */
         .status-exported { background:#eeeeee; color:#555; }
         .status-returned { background:#fde7e7; color:#a11111; }
         /* Void: the record survives, it just stops counting. Measured 8.5:1 on
@@ -893,6 +893,30 @@
         .void-banner { grid-column:1 / -1; background:#f3e8e8; border:1px solid #e3c9c9; border-radius:8px;
                        padding:10px 12px; font-size:13px; color:#7a2020; line-height:1.5; }
         .void-banner b { color:#7a2020; }
+        /* #797 approval record. Every text/band pair below is measured in the
+           harness (AA: 4.5:1 for normal text) — none is eyeballed. */
+        .lock-banner { grid-column:1 / -1; background:#eef7e7; border:1px solid #cfe3c0; border-radius:8px;
+                       padding:10px 12px; font-size:13px; color:#2f5211; line-height:1.5; }
+        .integrity { border-radius:8px; padding:10px 12px; font-size:13px; line-height:1.5; margin-bottom:12px; border:1px solid; }
+        .integrity b { font-weight:700; }
+        .integrity-ok { background:#e7f6ec; border-color:#bfe0c9; color:#0b5a0b; }
+        .integrity-bad { background:#fde7e7; border-color:#efc2c2; color:#8a0e0e; }
+        .integrity-info { background:#f3f2f1; border-color:#e1dfdd; color:#3b3a39; }
+        .integrity ul { margin:6px 0 0 18px; padding:0; }
+        .fp { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; word-break:break-all; }
+        .ev-src { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:#8a4b00; }
+        .ev-notes { white-space:normal; max-width:320px; }
+        table.bd-table td.wrap { white-space:normal; }
+        .appr-statement { display:flex; gap:12px; align-items:flex-start; padding:14px; border:2px solid var(--border);
+                          border-radius:10px; cursor:pointer; font-size:15px; line-height:1.45; margin:12px 0; }
+        .appr-statement input { width:26px; height:26px; flex:0 0 26px; margin:0; cursor:pointer; }
+        .appr-statement:has(input:checked) { border-color:#107c10; background:#f3faf4; }
+        .appr-id { font-size:14px; background:#f7f9fb; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+        .sage-row { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+        .sage-row input { padding:7px 9px; border:1px solid #8a8886; border-radius:6px; font-family:inherit; font-size:15px; width:9em; }
+        .hist-search { padding:7px 10px; border:1px solid #8a8886; border-radius:6px; font-family:inherit; font-size:15px; min-width:260px; margin-bottom:12px; }
+        #bdPrintMeta { display:none; }
+        td.integ-ok { color:#0b5a0b; font-weight:600; } td.integ-bad { color:#8a0e0e; font-weight:700; } td.integ-info { color:#3b3a39; }
         .flag-cell { color:#a11111; font-weight:600; white-space:normal; }
         .recon-prov-select { padding:2px 4px; border:1px solid var(--border); border-radius:4px; font-family:inherit; font-size:12px; }
         .btn-sm { padding:6px 12px; font-size:13px; }
@@ -941,7 +965,26 @@
             #batchDetailModal, #batchDetailModal * { visibility:visible; }
             #batchDetailModal { position:absolute; inset:0; background:#fff; display:block !important; padding:0; overflow:visible !important; }
             #batchDetailModal .modal-content { max-height:none !important; height:auto !important; overflow:visible !important; max-width:100%; box-shadow:none; border-radius:0; }
-            #bdActions { display:none !important; }
+            #bdActions, .no-print { display:none !important; }
+            /* #797: the printed sheet is the evidence stapled to the General
+               Journal, so a row must never be cut in half across a page. Rows
+               avoid breaking; table heads repeat on every page; the approval
+               block keeps together. The long tables themselves MAY break —
+               making a whole card unbreakable just pushes it to a new page and
+               leaves a blank one behind. */
+            table.bd-table tr, .integrity li { break-inside:avoid; page-break-inside:avoid; }
+            table.bd-table thead { display:table-header-group; }
+            /* A ref or date broken across three lines is hard to trace on
+               paper; only notes (td.wrap) may wrap. */
+            table.bd-table { font-size:11px; }
+            table.bd-table th, table.bd-table td { padding:4px 6px; }
+            table.bd-table td:not(.wrap), table.bd-table th { white-space:nowrap; }
+            table.bd-table td.wrap { min-width:18em; }
+            table.bd-table td.appr-flag { white-space:normal; }
+            .fp { font-size:10px; }
+            .bd-keep { break-inside:avoid; page-break-inside:avoid; }
+            .bd-card h4 { break-after:avoid; page-break-after:avoid; }
+            #bdPrintMeta { display:block; font-size:11px; color:#3b3a39; margin-bottom:8px; }
         }
     </style>
 </head>
@@ -969,6 +1012,9 @@
         // Receipt Processing System (DEXT replacement)
         receiptClaimsList: 'Receipt Claims',
         receiptBatchesList: 'Receipt Batches',
+        // Append-only lifecycle log for batches (task #797). The app only ever
+        // POSTs here — never PATCH, never DELETE. See batchHistoryAppend().
+        receiptBatchHistoryList: 'Receipt Batch History',
         receiptCategoryList: 'Receipt Category Quick Picks',
         receiptSenderMapList: 'Receipt Sender Map',
         // OCR endpoint (receipt-processor Vercel project, deployed 2026-06-14).
@@ -1520,6 +1566,10 @@
         <button class="recon-tab active" data-tab="pending" onclick="setBatchTab('pending')">Pending approval</button>
         <button class="recon-tab" data-tab="history" onclick="setBatchTab('history')">History</button>
     </div>
+    <div id="histSearchWrap" style="display:none;">
+        <label for="histSearch" style="display:block;font-size:12px;color:var(--text-light);margin-bottom:2px;">Find a batch by batch number, Sage journal entry (e.g. J674) or receipt ref — including batches a receipt was returned from</label>
+        <input id="histSearch" class="hist-search" type="search" placeholder="BATCH-2026-07, J674, REC-2026-0012…" oninput="renderBatches()">
+    </div>
     <div class="recon-table-wrap">
         <table class="recon-table" id="apprTable"><thead id="apprHead"></thead><tbody id="apprBody"></tbody></table>
     </div>
@@ -1528,10 +1578,26 @@
 <!-- Batch Detail / Approval Modal -->
 <div id="batchDetailModal" class="modal-overlay">
     <div class="modal-content" style="max-width:900px; max-height:88vh; overflow:auto;">
+        <div id="bdPrintMeta"></div>
         <h3 id="bdTitle">Batch</h3>
         <div id="bdSummary"></div>
+        <div id="bdRecord"></div>
         <div id="bdReceipts"></div>
+        <div id="bdHistory"></div>
         <div id="bdActions" style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap;"></div>
+    </div>
+</div>
+
+<!-- Approve confirmation (#797) — the approver affirms a statement; identity
+     comes from the signed-in account, never from a typed field. -->
+<div id="approveModal" class="modal-overlay" style="z-index:650;">
+    <div class="modal-content" style="max-width:560px;">
+        <h3 id="apTitle">Approve batch</h3>
+        <div id="apBody"></div>
+        <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="closeApproveModal()">Cancel</button>
+            <button class="btn btn-success" id="apConfirmBtn" disabled onclick="confirmApprove()">Approve batch</button>
+        </div>
     </div>
 </div>
 
@@ -3417,6 +3483,41 @@
         return '';
     }
 
+    // #797: why this claim is read-only in the console, or '' if it isn't.
+    // An approved receipt is the thing Bernie signed; editing it here would
+    // move a number under an approval with nothing to show for it. Before this,
+    // Save, Mark reconciled, bulk reconcile, bulk category and the inline
+    // province picker all wrote to approved receipts — only Void checked.
+    // 'exported' is in the Status choice list but nothing writes it; it is
+    // post-approval by definition, so it locks too. This is the ONE predicate:
+    // every mutator calls it (via editBlockReason) rather than restating it.
+    // A receipt in a PENDING batch stays editable on purpose — that is how
+    // Emmanuel fixes a batch before Bernie gets to it — and the created-event
+    // fingerprint makes any such change visible to Bernie (renderBatchIntegrity).
+    function approvedLockReason(f){
+        const st=String((f||{}).Status||'').toLowerCase();
+        if(st==='approved'||st==='exported'){
+            const ref=((f||{}).BatchRef||'').trim();
+            return `approved${ref?` in ${ref}`:''} — approved receipts are read-only`;
+        }
+        return '';
+    }
+    // Everything that stops an edit, in one place: void first (its own message
+    // tells you how to undo it), then the approval lock.
+    function editBlockReason(f){
+        if(isVoided(f)) return 'void — restore it first to edit it';
+        return approvedLockReason(f);
+    }
+    // Live version of the check for a single write. The in-memory row can be
+    // hours old; Bernie may have approved it since the console loaded.
+    async function liveEditBlock(rec){
+        let live;
+        try{ live=await liveClaimFields(rec.id); }
+        catch(e){ console.error(e); return `couldn't verify its status (${e.message})`; }
+        Object.assign(rec.f, live);
+        return editBlockReason(live);
+    }
+
     // Re-read one claim's live Status + BatchRef straight from SharePoint.
     // The console tab can sit open for hours; acting on the array we loaded at
     // 9am is how you void something Bernie approved at 11.
@@ -3632,7 +3733,7 @@
             const f=r.f, st=(f.Status||'submitted').toLowerCase();
             const provOpts=['',...RECEIPT_PROVINCES].map(p=>`<option value="${p}"${p===(f.Province||'')?' selected':''}>${p||'—'}</option>`).join('');
             const checked=reconSelected.has(r.id)?' checked':'';
-            const voided=isVoided(f);
+            const voided=isVoided(f), locked=!!approvedLockReason(f);
             const voidCells = showVoid
                 ? `<td>${reconEsc(f.VoidedBy)}</td><td>${reconEsc((f.VoidedAt||'').slice(0,10))}</td>`+
                   `<td class="void-reason">${reconEsc(f.VoidReason)}</td>`
@@ -3643,7 +3744,7 @@
                 <td>${reconEsc(f.ReceiptRef)}</td>
                 <td>${reconEsc((f.ReceiptDate||'').slice(0,10))}</td>
                 <td>${reconEsc(f.Vendor)}</td>
-                <td onclick="event.stopPropagation()"><select class="recon-prov-select" onchange="changeReconProvince('${r.id}', this.value)">${provOpts}</select></td>
+                <td onclick="event.stopPropagation()"><select class="recon-prov-select"${locked||voided?' disabled title="Read-only — '+(locked?'approved':'void')+'"':''} aria-label="Province for ${reconEsc(f.ReceiptRef)}" onchange="changeReconProvince('${r.id}', this.value)">${provOpts}</select></td>
                 <td>${reconEsc(f.SubmittedBy)}</td>
                 <td>${reconEsc(f.CategoryLabel)}</td>
                 <td class="num">${money(f.Subtotal)}</td>
@@ -3676,7 +3777,8 @@
     async function changeReconProvince(id, province){
         const rec=reconAll.find(r=>r.id===id); if(!rec) return;
         const f=rec.f;
-        if(isVoided(f)){ showToast('That receipt is void — restore it first to edit it.'); renderReconciliation(); return; }
+        const block=editBlockReason(f) || await liveEditBlock(rec);
+        if(block){ showToast(`${f.ReceiptRef||'That receipt'} is ${block}.`); renderReconciliation(); return; }
         const total=parseFloat(f.TotalAmount)||0, tip=parseFloat(f.TipAmount)||0;
         const taxable=Math.max(0, total-tip);
         let subtotal, gst, prov;
@@ -3754,37 +3856,59 @@
         const gl=document.getElementById('reconBulkCat').value;
         if(!gl){ showToast('Pick a category first.'); return; }
         const cat=allReconCats().find(c=>c.glCode===gl); if(!cat) return;
-        const ids=[...reconSelected].filter(id=>!isVoidRow(reconAll.find(r=>r.id===id)));
-        if(!ids.length){ showToast('Nothing to update — voided receipts are skipped.'); return; }
-        showToast(`Updating ${ids.length}…`);
-        try{
-            for(const id of ids){
-                await reconPatch(id, { Category:`${cat.glCode} - ${cat.label}`, CategoryLabel:cat.label });
-                const rec=reconAll.find(r=>r.id===id); if(rec){ rec.f.Category=`${cat.glCode} - ${cat.label}`; rec.f.CategoryLabel=cat.label; }
-            }
-            showToast(`Category set on ${ids.length} receipt${ids.length===1?'':'s'}.`);
-            renderReconciliation();
-        }catch(e){ console.error(e); showToast('Bulk update failed — reloading.'); loadReconciliation(); }
+        const recs=[...reconSelected].map(id=>reconAll.find(r=>r.id===id)).filter(r=>r && !editBlockReason(r.f));
+        if(!recs.length){ showToast('Nothing to update — voided and approved receipts are read-only.'); return; }
+        showToast(`Updating ${recs.length}…`);
+        const res=await bulkEditEach(recs, async rec=>{
+            await reconPatch(rec.id, { Category:`${cat.glCode} - ${cat.label}`, CategoryLabel:cat.label });
+            rec.f.Category=`${cat.glCode} - ${cat.label}`; rec.f.CategoryLabel=cat.label;
+        });
+        renderReconciliation();
+        showToast(bulkEditSummary(res, 'category set'));
+    }
+
+    // #797: the bulk edits used to trust the in-memory row and stop at the
+    // first failure. Now each row is re-read live and re-checked against
+    // editBlockReason() before its write (Bernie can approve while this tab
+    // sits open), and one failure no longer abandons the rest — the same
+    // per-item shape as voidClaims() and the 2026-06-19 approval hardening.
+    async function bulkEditEach(recs, write){
+        const done=[], skipped=[], failed=[];
+        for(const rec of recs){
+            const block=await liveEditBlock(rec);
+            if(block){ skipped.push(`${rec.f.ReceiptRef||rec.id} (${block})`); continue; }
+            try{ await write(rec); done.push(rec.f.ReceiptRef||rec.id); }
+            catch(e){ console.error(e); failed.push(`${rec.f.ReceiptRef||rec.id} (${e.message})`); }
+        }
+        return {done, skipped, failed};
+    }
+    function bulkEditSummary(r, verb){
+        const parts=[];
+        if(r.done.length) parts.push(`${verb} on ${r.done.length}`);
+        if(r.skipped.length) parts.push(`skipped ${r.skipped.join(', ')}`);
+        if(r.failed.length) parts.push(`failed ${r.failed.join(', ')}`);
+        return parts.join(' · ')||'Nothing changed.';
     }
 
     async function bulkMarkReconciled(){
         // A voided claim must not come back through the reconcile door — that
         // would clear the void by writing Status without clearing the audit
         // fields, leaving a receipt that counts again and still reads "voided by".
-        const ids=[...reconSelected].filter(id=>!isVoidRow(reconAll.find(r=>r.id===id)));
-        if(!ids.length){ showToast('Nothing to reconcile — voided receipts are skipped. Restore one from the Voided tab first.'); return; }
+        // #797: the same door would have walked an APPROVED receipt back to
+        // 'reconciled' while it still carried its BatchRef — an approval
+        // silently undone on one line of a signed batch.
+        const recs=[...reconSelected].map(id=>reconAll.find(r=>r.id===id)).filter(r=>r && !editBlockReason(r.f));
+        if(!recs.length){ showToast('Nothing to reconcile — voided and approved receipts are skipped. Restore a voided one from the Voided tab first.'); return; }
         const who=(currentUser&&(currentUser.name||currentUser.username))||'';
         const now=new Date().toISOString();
-        showToast(`Marking ${ids.length} reconciled…`);
-        try{
-            for(const id of ids){
-                await reconPatch(id, { Status:'reconciled', ReconciledBy:who, ReconciledAt:now });
-                const rec=reconAll.find(r=>r.id===id); if(rec){ rec.f.Status='reconciled'; rec.f.ReconciledBy=who; rec.f.ReconciledAt=now; }
-            }
-            reconSelected.clear();
-            showToast(`${ids.length} marked reconciled.`);
-            renderReconciliation();
-        }catch(e){ console.error(e); showToast('Bulk reconcile failed — reloading.'); loadReconciliation(); }
+        showToast(`Marking ${recs.length} reconciled…`);
+        const res=await bulkEditEach(recs, async rec=>{
+            await reconPatch(rec.id, { Status:'reconciled', ReconciledBy:who, ReconciledAt:now });
+            rec.f.Status='reconciled'; rec.f.ReconciledBy=who; rec.f.ReconciledAt=now;
+        });
+        reconSelected.clear();
+        renderReconciliation();
+        showToast(bulkEditSummary(res, 'reconciled'));
     }
 
     // ---- Row expand + inline edit ----
@@ -3823,6 +3947,30 @@
                 <div class="fld"><label>Total paid</label><div>${(()=>{const n=parseFloat(f.TotalAmount);return isNaN(n)?'—':'$'+n.toFixed(2);})()}</div></div>
                 <div class="recon-form-actions">
                     ${canVoid()?`<button class="btn btn-success btn-sm" onclick="restoreVoided('${id}')">Restore to ${reconEsc(priorStatusFor(f))}</button>`:''}
+                    <button class="btn btn-outline btn-sm" onclick="toggleReconRow('${id}')">Close</button>
+                </div>
+            </div>
+        </div>`;
+        }
+        // #797: an approved receipt opens read-only — no inputs, so there is
+        // nothing to Save. The Batches view carries its approval record.
+        if(approvedLockReason(f)){
+            const m=k=>{const x=parseFloat(f[k]);return isNaN(x)?'—':'$'+x.toFixed(2);};
+            const ro=(label,val)=>`<div class="fld"><label>${label}</label><div>${val}</div></div>`;
+            return `<div class="recon-detail-grid">
+            <div class="recon-detail-img" id="img-${id}"><div class="recon-noimg">Loading image…</div></div>
+            <div class="recon-form">
+                <div class="lock-banner">
+                    <b>Approved</b>${f.ApprovedBy?` by ${reconEsc(f.ApprovedBy)}`:''}${f.ApprovedAt?` on ${reconEsc(fmtRegina(f.ApprovedAt,true))}`:''}${f.BatchRef?` in <b>${reconEsc(f.BatchRef)}</b>`:''}.<br>
+                    Approved receipts are read-only here, so the batch stays exactly as it was signed.
+                </div>
+                ${ro('Ref',reconEsc(f.ReceiptRef)||'—')}${ro('Vendor',reconEsc(f.Vendor)||'—')}
+                ${ro('Date',reconEsc((f.ReceiptDate||'').slice(0,10))||'—')}${ro('Province',reconEsc(f.Province)||'—')}
+                ${ro('Category',reconEsc(f.CategoryLabel)||'—')}${ro('Subtotal',m('Subtotal'))}
+                ${ro('GST',m('GSTAmount'))}${ro('Provincial tax',m('ProvincialTax'))}
+                ${ro('Tip',m('TipAmount'))}${ro('Total paid',m('TotalAmount'))}
+                <div class="fld full"><label>Note</label><div>${f.Description?reconEsc(f.Description):'—'}</div></div>
+                <div class="recon-form-actions">
                     <button class="btn btn-outline btn-sm" onclick="toggleReconRow('${id}')">Close</button>
                 </div>
             </div>
@@ -3915,7 +4063,8 @@
 
     async function saveReconRow(id){
         const rec=reconAll.find(r=>r.id===id); if(!rec) return;
-        if(isVoidRow(rec)){ showToast('That receipt is void — restore it first to edit it.'); return; }
+        const block=editBlockReason(rec.f) || await liveEditBlock(rec);
+        if(block){ showToast(`${rec.f.ReceiptRef||'That receipt'} is ${block} — nothing was saved.`); renderReconciliation(); return; }
         const num=el=>{ const x=parseFloat(document.getElementById(el).value); return isNaN(x)?0:Math.round(x*100)/100; };
         const gl=document.getElementById('ed-Category-'+id).value;
         const cat=allReconCats().find(c=>c.glCode===gl);
@@ -3941,7 +4090,8 @@
 
     async function markReconciledRow(id){
         const rec=reconAll.find(r=>r.id===id); if(!rec) return;
-        if(isVoidRow(rec)){ showToast('That receipt is void — restore it first.'); return; }
+        const block=editBlockReason(rec.f) || await liveEditBlock(rec);
+        if(block){ showToast(`${rec.f.ReceiptRef||'That receipt'} is ${block}.`); renderReconciliation(); return; }
         const who=(currentUser&&(currentUser.name||currentUser.username))||''; const now=new Date().toISOString();
         try{
             await reconPatch(id, { Status:'reconciled', ReconciledBy:who, ReconciledAt:now });
@@ -4144,32 +4294,60 @@
             await refreshAccessToken();
             const site=await graphSite();
             const batchListId=await graphListId(site.id, CONFIG.receiptBatchesList);
+            // #797 pre-flight, before anything is created: the history log must
+            // be readable (we need it to spot receipts coming back from a
+            // returned batch) and so writable in principle. A missing log stops
+            // here with nothing changed.
+            try{ historyAll=await loadListItems(CONFIG.receiptBatchHistoryList); historyError=''; }
+            catch(e){ throw new Error(`batch history unavailable (${e.message}) — nothing was created`); }
             const ref=await nextBatchRef(site.id, batchListId);
             const dates=recs.map(r=>(r.f.ReceiptDate||'').slice(0,10)).filter(Boolean).sort();
             const r2=x=>Math.round(x*100)/100;
             const t=recs.reduce((a,r)=>{a.sub+=+r.f.Subtotal||0;a.gst+=+r.f.GSTAmount||0;a.prov+=+r.f.ProvincialTax||0;a.tot+=+r.f.TotalAmount||0;a.flag+=r.f.Flag?1:0;return a;},{sub:0,gst:0,prov:0,tot:0,flag:0});
-            const who=(currentUser&&(currentUser.name||currentUser.username))||'', now=new Date().toISOString();
-            const fields={ Title:ref, BatchRef:ref,
+            const actor=actorIdentity(), who=actor.name||actor.upn, now=new Date().toISOString();
+            const notes=document.getElementById('batchNotes').value.trim();
+            const fields={ Title:ref, BatchRef:ref, PreparedByUPN:actor.upn,
                 PeriodStart: dates[0]?dates[0]+'T12:00:00-06:00':null,
                 PeriodEnd: dates.length?dates[dates.length-1]+'T12:00:00-06:00':null,
                 TotalSubtotal:r2(t.sub), TotalGST:r2(t.gst), TotalProvincialTax:r2(t.prov), TotalAmount:r2(t.tot),
                 ReceiptCount:recs.length, FlagCount:t.flag,
-                AccountantNotes:document.getElementById('batchNotes').value.trim(),
+                AccountantNotes:notes,
                 PreparedBy:who, PreparedAt:now, Status:'pending_approval' };
             const cr=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${batchListId}/items`,{
                 method:'POST', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':'application/json'},
                 body:JSON.stringify({fields}) });
             if(!cr.ok) throw new Error('batch create '+cr.status);
+            const created=await cr.json();
             // Stamp each receipt with the BatchRef; collect (don't abort on) per-receipt failures
             // so a mid-loop error doesn't silently leave the batch under-attached.
-            const failed=[];
+            const failed=[], attached=[];
             for(const r of recs){
-                try{ await reconPatch(r.id, { BatchRef:ref }); const rec=reconAll.find(x=>x.id===r.id); if(rec) rec.f.BatchRef=ref; }
+                try{ await reconPatch(r.id, { BatchRef:ref }); const rec=reconAll.find(x=>x.id===r.id); if(rec) rec.f.BatchRef=ref; attached.push(r); }
                 catch(e){ console.error(e); failed.push(r.f.ReceiptRef||r.id); }
             }
             document.getElementById('batchNotes').value='';
-            if(failed.length) showToast(`Batch ${ref} created, but ${failed.length} receipt(s) didn’t attach: ${failed.join(', ')} — re-batch them.`);
-            else showToast(`Created ${ref} with ${recs.length} receipt(s).`);
+            // #797: the 'created' event is logged AFTER the receipts are attached
+            // and lists only the ones that did — the snapshot is what Bernie will
+            // be asked to sign, not what was selected. Receipts that come back
+            // from a returned batch are linked both ways: RelatedBatchRef here,
+            // and a 'resubmitted' event on the batch they were returned from.
+            let histNote='';
+            try{
+                const snap=batchSnapshot(attached), ids=new Set(snap.map(s=>s.id));
+                const prior=new Map();
+                historyAll.filter(h=>h.f.EventType==='returned').forEach(h=>{
+                    const moved=parseSnap(h.f.Snapshot).filter(s=>ids.has(String(s.id)));
+                    if(moved.length) prior.set(h.f.BatchRef, moved.map(s=>snap.find(x=>x.id===String(s.id))));
+                });
+                await batchHistoryAppend({batchRef:ref, batchItemId:created.id, type:'created', at:now, actor, snapshot:snap,
+                    fingerprint:await fingerprintSnap(snap), related:[...prior.keys()].join(', '),
+                    notes:(notes?`Notes for the approver: ${notes}`:'')+(prior.size?`${notes?' · ':''}Includes receipts returned in ${[...prior.keys()].join(', ')}.`:'')});
+                for(const [pref, moved] of prior)
+                    await batchHistoryAppend({batchRef:pref, type:'resubmitted', at:now, actor, snapshot:moved, related:ref,
+                        notes:`${moved.length} receipt${moved.length===1?'':'s'} returned in this batch ${moved.length===1?'was':'were'} re-batched into ${ref}.`});
+            }catch(e){ console.error(e); histNote=' The history entry didn’t save — open the batch in Batches to record it.'; }
+            if(failed.length) showToast(`Batch ${ref} created, but ${failed.length} receipt(s) didn’t attach: ${failed.join(', ')} — re-batch them.${histNote}`);
+            else showToast(`Created ${ref} with ${recs.length} receipt(s).${histNote}`);
             closeBatchModal(); reconSelected.clear(); renderReconciliation();
         }catch(e){ console.error(e); showToast('Batch creation failed — '+e.message); btn.disabled=false; btn.textContent='Create batch'; }
     }
@@ -4323,8 +4501,14 @@
 
     // ========== APPROVAL DASHBOARD (View C — Bernie) ==========
     let batchAll=[], batchTab='pending', _bdClaims=[], _bdFlaggedOnly=false;
+    // #797: the history log, every claim (for the History tab's integrity
+    // column and search), and a per-batch index built from both.
+    let historyAll=[], historyError='', batchClaimsAll=[], batchIndex=new Map();
 
-    // Generic loader: all items of a list as [{id, f}].
+    // Generic loader: all items of a list as [{id, f, by, created}]. `by` and
+    // `created` are SharePoint's own server stamps (createdBy / createdDateTime)
+    // — the app cannot set them, which is what makes them worth showing an
+    // auditor next to the EventAt/Actor fields the app writes itself.
     async function loadListItems(listName){
         await refreshAccessToken();
         const site=await graphSite();
@@ -4333,11 +4517,238 @@
         const rows=[];
         while(url){
             const res=await fetch(url,{headers:{'Authorization':`Bearer ${accessToken}`,'Cache-Control':'no-cache'},cache:'no-store'});
+            if(!res.ok) throw new Error(`${listName} GET ${res.status}`);
             const d=await res.json();
-            (d.value||[]).forEach(it=>rows.push({id:it.id, f:it.fields||{}}));
+            (d.value||[]).forEach(it=>rows.push({id:it.id, f:it.fields||{},
+                by:((it.createdBy||{}).user||(it.createdBy||{}).application||{}).displayName||'', created:it.createdDateTime||''}));
             url=d['@odata.nextLink']||null;
         }
         return rows;
+    }
+
+    // ---------- #797: approval record + batch history ----------
+    //
+    // Two stores, on purpose:
+    //  * The BATCH item carries the record of its own decisive state change —
+    //    who approved (from the token), when, the statement affirmed, the
+    //    totals, the receipt snapshot and its fingerprint (likewise for a
+    //    return and for the Sage posting). It is written IN the same PATCH as
+    //    the status change, so the state and its record cannot come apart.
+    //  * `Receipt Batch History` is the append-only SEQUENCE of events across
+    //    the batch's life. Each row is written only AFTER the state change it
+    //    describes has succeeded. If that write fails, the state change stands
+    //    (unwinding an approval to cover a failed log write would be worse and
+    //    could itself fail) and the batch's own record is enough to write the
+    //    missing row later, marked Source='recovered' — see missingEvents().
+    // Before any state change, historyReachable() confirms the log exists, so
+    // a missing or renamed list stops the action with nothing changed.
+
+    // The statement the approver affirms. The FILLED-IN text is stored with the
+    // approval, so rewording this later never changes what an earlier approver
+    // agreed to.
+    function approvalStatement(ref, n, total, gst, name){
+        return `I, ${name}, have reviewed the ${n} receipt${n===1?'':'s'} in ${ref} totalling $${total.toFixed(2)} `+
+               `(GST $${gst.toFixed(2)}) and approve them for posting to the General Journal.`;
+    }
+
+    // Who is acting, from the signed-in Microsoft account MSAL holds — never a
+    // typed field. upn = the sign-in address; oid = the Entra object id, which
+    // survives a display-name change.
+    function actorIdentity(){
+        const a=currentUser||{}, c=a.idTokenClaims||{};
+        return { name:String(a.name||c.name||'').trim(),
+                 upn:String(a.username||c.preferred_username||'').trim().toLowerCase(),
+                 oid:String(c.oid||a.localAccountId||'').trim() };
+    }
+
+    // An instant, shown on Regina's clock (no DST, so always CST). Stored
+    // values stay real UTC instants; only the display is local.
+    function fmtRegina(iso, dateOnly){
+        if(!iso) return '';
+        const d=new Date(iso); if(isNaN(d)) return String(iso);
+        const o={timeZone:'America/Regina', year:'numeric', month:'2-digit', day:'2-digit'};
+        if(!dateOnly) Object.assign(o,{hour:'2-digit', minute:'2-digit', hourCycle:'h23'});
+        return d.toLocaleString('en-CA',o).replace(',','')+(dateOnly?'':' CST');
+    }
+
+    const cents=x=>Math.round((parseFloat(x)||0)*100);
+    function glOf(f){ const m=String(f.Category||'').match(/^\s*([0-9A-Za-z]+)/); return m?m[1]:''; }
+    // One receipt as it stands, in the shape every snapshot uses. Short keys:
+    // this is stored as JSON on the batch and on every event.
+    function claimSnap(r){ const f=r.f;
+        return { id:String(r.id), ref:String(f.ReceiptRef||'').trim(), date:String(f.ReceiptDate||'').slice(0,10),
+            vendor:String(f.Vendor||'').trim(), prov:String(f.Province||'').trim().toUpperCase(), gl:glOf(f),
+            cat:String(f.CategoryLabel||'').trim(), by:String(f.SubmittedBy||'').replace(/\s+/g,' ').trim(),
+            sub:cents(f.Subtotal)/100, gst:cents(f.GSTAmount)/100, pst:cents(f.ProvincialTax)/100,
+            tip:cents(f.TipAmount)/100, total:cents(f.TotalAmount)/100, flag:String(f.Flag||'').trim() }; }
+    function batchSnapshot(claims){ return claims.map(claimSnap).sort((a,b)=>a.ref.localeCompare(b.ref)||a.id.localeCompare(b.id)); }
+    // Summed in whole cents so 17 receipts can't drift a float off by $0.01.
+    function snapTotals(snap){
+        const t=snap.reduce((a,s)=>({n:a.n+1, c:a.c+cents(s.total), g:a.g+cents(s.gst)}),{n:0,c:0,g:0});
+        return {n:t.n, total:t.c/100, gst:t.g/100};
+    }
+    function parseSnap(s){ try{ const v=JSON.parse(s||'[]'); return Array.isArray(v)?v:[]; }catch(e){ return []; } }
+
+    // Fingerprint of a receipt set: SHA-256 over one canonical line per
+    // receipt, lines sorted, with a version header. It covers every field that
+    // changes what gets POSTED — ref, date, the five amounts, GL, province and
+    // the submitter (which picks the card credit account) — so any of those
+    // moving after approval shows. Vendor, note and flag are deliberately out:
+    // fixing a vendor typo is not a financial change. The canonical form is
+    // written out in the spec (§9.5) so an auditor can recompute it without
+    // this code. Stored as "v1:<64 hex>".
+    const FP_VERSION='v1';
+    function fingerprintText(snap){
+        const m=x=>(+x).toFixed(2);
+        const lines=snap.map(s=>[s.ref,s.date,m(s.total),m(s.sub),m(s.gst),m(s.pst),m(s.tip),s.gl,s.prov,s.by].join('|')).sort();
+        return 'CMD-RECEIPT-BATCH-'+FP_VERSION+'\n'+lines.join('\n');
+    }
+    async function fingerprintSnap(snap){
+        const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprintText(snap)));
+        return FP_VERSION+':'+[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+
+    // What moved between two snapshots, per receipt, in plain words.
+    function snapDiff(before, after){
+        const A=new Map(before.map(s=>[String(s.id),s])), B=new Map(after.map(s=>[String(s.id),s])), out=[];
+        const money=v=>'$'+(+v||0).toFixed(2);
+        const F=[['total','total',1],['sub','subtotal',1],['gst','GST',1],['pst','provincial tax',1],['tip','tip',1],
+                 ['gl','GL account',0],['prov','province',0],['date','date',0],['by','submitter',0]];
+        for(const [id,a] of A){ const b=B.get(id);
+            if(!b){ out.push(`${a.ref||id} is no longer in the batch (was ${money(a.total)})`); continue; }
+            F.forEach(([k,label,isMoney])=>{
+                const x=isMoney?cents(a[k]):String(a[k]||''), y=isMoney?cents(b[k]):String(b[k]||'');
+                if(x!==y) out.push(`${a.ref||id}: ${label} ${isMoney?money(a[k]):(a[k]||'—')} → ${isMoney?money(b[k]):(b[k]||'—')}`);
+            });
+        }
+        for(const [id,b] of B) if(!A.has(id)) out.push(`${b.ref||id} was added to the batch (${money(b.total)})`);
+        return out;
+    }
+
+    function eventsFor(ref){
+        return historyAll.filter(h=>(h.f.BatchRef||'')===ref)
+            .sort((a,b)=>String(a.f.EventAt||a.created||'').localeCompare(String(b.f.EventAt||b.created||''))||(+a.id - +b.id));
+    }
+    function lastEvent(ref, type){ const e=eventsFor(ref).filter(h=>h.f.EventType===type); return e[e.length-1]||null; }
+
+    // THE ONLY WRITE THIS APP MAKES TO THE HISTORY LIST IS THIS POST. There is
+    // no PATCH or DELETE path to it anywhere in this file — keep it that way.
+    // Every caller runs it AFTER the state change it describes has succeeded.
+    async function batchHistoryAppend(ev){
+        await refreshAccessToken();
+        const site=await graphSite();
+        const listId=await graphListId(site.id, CONFIG.receiptBatchHistoryList);
+        const fields={ Title:`${ev.batchRef} · ${ev.type}`, BatchRef:ev.batchRef, EventType:ev.type,
+            EventAt:ev.at||new Date().toISOString(), ActorName:ev.actor.name||ev.actor.upn||'',
+            ActorUPN:ev.actor.upn||'', ActorOid:ev.actor.oid||'', Source:ev.source||'live', Notes:ev.notes||'' };
+        if(ev.batchItemId!=null && ev.batchItemId!=='') fields.BatchItemId=+ev.batchItemId;
+        if(ev.snapshot){ const t=snapTotals(ev.snapshot);
+            Object.assign(fields,{ Snapshot:JSON.stringify(ev.snapshot), ReceiptCount:t.n, GrandTotal:t.total, TotalGST:t.gst }); }
+        if(ev.fingerprint) fields.Fingerprint=ev.fingerprint;
+        if(ev.related) fields.RelatedBatchRef=ev.related;
+        if(ev.sageRef) fields.SageJournalRef=ev.sageRef;
+        const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items`,{
+            method:'POST', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':'application/json'}, body:JSON.stringify({fields})});
+        if(!res.ok) throw new Error('history POST '+res.status+' '+(await res.text()).slice(0,160));
+        const it=await res.json();
+        historyAll.push({id:it.id, f:Object.assign({},fields,it.fields||{}),
+            by:((it.createdBy||{}).user||{}).displayName||ev.actor.name||'', created:it.createdDateTime||fields.EventAt});
+        return it;
+    }
+    // Pre-flight, before any state change: can the log be reached at all?
+    async function historyReachable(){
+        try{ await refreshAccessToken(); const site=await graphSite(); await graphListId(site.id, CONFIG.receiptBatchHistoryList); return ''; }
+        catch(e){ console.error(e); return e.message; }
+    }
+
+    // The receipts in a batch right now. For a PENDING batch: everything
+    // carrying its BatchRef, plus anything its created event listed that a
+    // half-finished Return already freed (BatchRef cleared, back to
+    // reconciled) — without that, a retried Return would snapshot only the
+    // receipts the first attempt didn't reach, and the record of what was in
+    // the batch would silently shrink.
+    function batchMembers(b, claims){
+        const ref=b.f.BatchRef||'§none';
+        const mine=claims.filter(r=>(r.f.BatchRef||'')===ref && !isVoidRow(r));
+        if((b.f.Status||'').toLowerCase()!=='pending_approval') return mine;
+        const created=lastEvent(ref,'created');
+        const ids=new Set(parseSnap(created&&created.f.Snapshot).map(s=>String(s.id)));
+        const have=new Set(mine.map(r=>String(r.id)));
+        return mine.concat(claims.filter(r=>ids.has(String(r.id)) && !have.has(String(r.id))
+            && !(r.f.BatchRef||'') && (r.f.Status||'').toLowerCase()==='reconciled'));
+    }
+
+    // A returned batch's receipts no longer point at it, so what it held comes
+    // from the snapshot taken at the return — with the live claim underneath
+    // for the image and note, but the snapshot's numbers on top.
+    function returnedSnapshot(b){
+        const ev=lastEvent(b.f.BatchRef||'','returned');
+        const s=parseSnap(b.f.ReturnSnapshot); return s.length?s:parseSnap(ev&&ev.f.Snapshot);
+    }
+    function snapAsClaim(s, claims){
+        const live=claims.find(r=>String(r.id)===String(s.id));
+        return { id:String(s.id), f:Object.assign({}, live?live.f:{}, { ReceiptRef:s.ref, ReceiptDate:s.date, Vendor:s.vendor,
+            Province:s.prov, CategoryLabel:s.cat, SubmittedBy:s.by, Subtotal:s.sub, GSTAmount:s.gst, ProvincialTax:s.pst,
+            TipAmount:s.tip, TotalAmount:s.total, Flag:s.flag }) };
+    }
+
+    // Does the batch still hold what was approved? basis 'approval' = the
+    // fingerprint taken at approval (live record). basis 'baseline' = the
+    // fingerprint a RECONSTRUCTED event took for a batch approved before
+    // records were kept: it says nothing about approval day, only whether
+    // anything has moved since the baseline was taken.
+    async function batchIntegrity(b, claims){
+        const f=b.f, ref=f.BatchRef||'', ev=lastEvent(ref,'approved');
+        const now=batchSnapshot(batchMembers(b, claims)), actual=await fingerprintSnap(now);
+        let expected=f.ApprovalFingerprint||'', basis='approval', basisSnap=parseSnap(f.ApprovalSnapshot), basisAt=f.ApprovedAt;
+        // The batch and its event each hold a copy; they must agree.
+        const disagree=!!(expected && ev && ev.f.Fingerprint && ev.f.Fingerprint!==expected);
+        if(!expected && ev && ev.f.Fingerprint){
+            expected=ev.f.Fingerprint; basisSnap=parseSnap(ev.f.Snapshot);
+            if((ev.f.Source||'')==='reconstructed'){ basis='baseline'; basisAt=ev.created; } else basisAt=ev.f.EventAt;
+        }
+        if(!basisSnap.length && ev) basisSnap=parseSnap(ev.f.Snapshot);
+        if(!expected) return {state:'none', actual, now};
+        if(expected.split(':')[0]!==FP_VERSION) return {state:'version', expected, actual, now, basis, basisAt};
+        const ok=expected===actual;
+        return {state:ok?'match':'changed', basis, basisAt, expected, actual, disagree, now, diff:ok?[]:snapDiff(basisSnap, now)};
+    }
+
+    // Events a batch's own record says happened but the log doesn't have —
+    // the live write failed after the state change. Only for batches acted on
+    // under #797 (they carry a UPN); older ones are the backfill's job.
+    function missingEvents(b){
+        const f=b.f, ref=f.BatchRef||'', st=(f.Status||'').toLowerCase(), has=t=>!!lastEvent(ref,t), out=[];
+        if(historyError) return out;
+        if(st==='pending_approval' && f.PreparedByUPN && !has('created')) out.push('created');
+        if(st==='approved' && f.ApprovedByUPN && !has('approved')) out.push('approved');
+        if(st==='returned' && f.ReturnedByUPN && !has('returned')) out.push('returned');
+        if(f.SageJournalRef && f.PostedByUPN && !has('posted') && !has('posting_corrected')) out.push('posted');
+        return out;
+    }
+    async function recordMissingEvents(batchId){
+        const b=batchAll.find(x=>x.id===batchId); if(!b) return;
+        const f=b.f, ref=f.BatchRef||'', note=' Recorded after the fact from the batch’s own record — the history write failed at the time.';
+        const done=[], failed=[];
+        for(const t of missingEvents(b)){
+            try{
+                if(t==='approved') await batchHistoryAppend({batchRef:ref, batchItemId:b.id, type:t, source:'recovered', at:f.ApprovedAt,
+                    actor:{name:f.ApprovedBy, upn:f.ApprovedByUPN, oid:f.ApprovedByOid}, snapshot:parseSnap(f.ApprovalSnapshot),
+                    fingerprint:f.ApprovalFingerprint, notes:(f.ApprovalStatement||'')+note});
+                else if(t==='returned') { const s=parseSnap(f.ReturnSnapshot);
+                    await batchHistoryAppend({batchRef:ref, batchItemId:b.id, type:t, source:'recovered', at:f.ReturnedAt,
+                    actor:{name:f.ReturnedBy, upn:f.ReturnedByUPN}, snapshot:s, fingerprint:await fingerprintSnap(s), notes:(f.ReturnNotes||'')+note}); }
+                else if(t==='posted') await batchHistoryAppend({batchRef:ref, batchItemId:b.id, type:t, source:'recovered', at:f.PostedAt,
+                    actor:{name:f.PostedBy, upn:f.PostedByUPN}, sageRef:f.SageJournalRef, notes:`Posted to Sage as General Journal entry ${f.SageJournalRef}.`+note});
+                else if(t==='created') { const s=batchSnapshot(batchMembers(b, batchClaimsAll));
+                    await batchHistoryAppend({batchRef:ref, batchItemId:b.id, type:t, source:'recovered', at:f.PreparedAt,
+                    actor:{name:f.PreparedBy, upn:f.PreparedByUPN}, snapshot:s, fingerprint:await fingerprintSnap(s),
+                    notes:'Contents as found when this entry was recorded, not necessarily as submitted.'+note}); }
+                done.push(t);
+            }catch(e){ console.error(e); failed.push(`${t} (${e.message})`); }
+        }
+        showToast(done.length?`Recorded: ${done.join(', ')}${failed.length?` · failed: ${failed.join(', ')}`:''}`:`Nothing recorded${failed.length?` — ${failed.join(', ')}`:''}.`);
+        renderBatchDetail(b); refreshBatchIndex();
     }
 
     async function openApprovalDashboard(){
@@ -4350,44 +4761,90 @@
     }
     async function loadBatches(){
         const body=document.getElementById('apprBody');
-        body.innerHTML='<tr><td colspan="8" class="recon-empty">Loading…</td></tr>';
-        try{ batchAll=await loadListItems(CONFIG.receiptBatchesList); renderBatches(); }
-        catch(e){ console.error(e); body.innerHTML=`<tr><td colspan="8" class="recon-empty">Could not load batches: ${reconEsc(e.message)}</td></tr>`; }
+        body.innerHTML='<tr><td colspan="11" class="recon-empty">Loading…</td></tr>';
+        // The history log and the claims feed the audit columns; if either is
+        // unreadable the batch list still loads, and says what's missing.
+        const [bs, hs, cs]=await Promise.allSettled([loadListItems(CONFIG.receiptBatchesList),
+            loadListItems(CONFIG.receiptBatchHistoryList), loadListItems(CONFIG.receiptClaimsList)]);
+        if(bs.status!=='fulfilled'){ console.error(bs.reason);
+            body.innerHTML=`<tr><td colspan="11" class="recon-empty">Could not load batches: ${reconEsc(bs.reason&&bs.reason.message)}</td></tr>`; return; }
+        batchAll=bs.value;
+        if(hs.status==='fulfilled'){ historyAll=hs.value; historyError=''; } else { historyAll=[]; historyError=(hs.reason&&hs.reason.message)||'unreadable'; console.error(hs.reason); }
+        batchClaimsAll=cs.status==='fulfilled'?cs.value:[];
+        await refreshBatchIndex();
+    }
+    // Per-batch integrity + search text, rebuilt after every load or action.
+    async function refreshBatchIndex(){
+        const idx=new Map();
+        for(const b of batchAll){
+            const f=b.f, ref=f.BatchRef||'', st=(f.Status||'').toLowerCase();
+            const refs=new Set(batchClaimsAll.filter(r=>(r.f.BatchRef||'')===ref).map(r=>r.f.ReceiptRef||''));
+            eventsFor(ref).forEach(h=>parseSnap(h.f.Snapshot).forEach(s=>refs.add(s.ref)));
+            parseSnap(f.ReturnSnapshot).forEach(s=>refs.add(s.ref));
+            let integ=null;
+            if(st==='approved' && batchClaimsAll.length) try{ integ=await batchIntegrity(b, batchClaimsAll); }catch(e){ console.error(e); }
+            idx.set(b.id, { integ, search:[ref, f.SageJournalRef||'', ...refs].join(' ').toLowerCase() });
+        }
+        batchIndex=idx;
+        renderBatches();
     }
     function setBatchTab(t){ batchTab=t; document.querySelectorAll('#apprTabs .recon-tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===t)); renderBatches(); }
 
     function batchPeriod(f){ const a=(f.PeriodStart||'').slice(0,10), b=(f.PeriodEnd||'').slice(0,10); return a&&b?(a===b?a:`${a} → ${b}`):(a||b||''); }
 
+    function integrityCell(i){
+        if(!i) return '<td>—</td>';
+        if(i.state==='match') return `<td class="integ-ok">${i.basis==='baseline'?'Unchanged since baseline':'Matches approval'}</td>`;
+        if(i.state==='changed') return `<td class="integ-bad">Changed since ${i.basis==='baseline'?'baseline':'approval'}</td>`;
+        if(i.state==='version') return '<td class="integ-info">Older fingerprint format</td>';
+        return '<td class="integ-info">No fingerprint</td>';
+    }
     function renderBatches(){
         const head=document.getElementById('apprHead'), body=document.getElementById('apprBody');
-        head.innerHTML='<tr><th>Batch</th><th>Period</th><th>Prepared by</th><th class="num">Receipts</th><th class="num">Total</th><th class="num">GST</th><th class="num">Flags</th><th>Status</th></tr>';
+        const hist=batchTab==='history';
+        document.getElementById('histSearchWrap').style.display=hist?'':'none';
+        const cols=hist?11:8;
+        head.innerHTML='<tr><th>Batch</th><th>Period</th><th>Prepared by</th><th class="num">Receipts</th><th class="num">Total</th><th class="num">GST</th>'+
+            (hist?'<th>Status</th><th>Approved by</th><th>Approved</th><th>Sage entry</th><th>Receipts vs approval</th>':'<th class="num">Flags</th><th>Status</th>')+'</tr>';
         const isPending=b=>(b.f.Status||'').toLowerCase()==='pending_approval';
-        let rows=batchAll.filter(b=> batchTab==='pending'?isPending(b):!isPending(b));
+        let rows=batchAll.filter(b=> hist?!isPending(b):isPending(b));
+        const q=hist?(document.getElementById('histSearch').value||'').trim().toLowerCase():'';
+        if(q) rows=rows.filter(b=>((batchIndex.get(b.id)||{}).search||(b.f.BatchRef||'').toLowerCase()).includes(q));
         rows.sort((a,b)=>((b.f.PreparedAt||'')+'').localeCompare((a.f.PreparedAt||'')+''));
         document.getElementById('apprCount').textContent=`${rows.length} batch${rows.length===1?'':'es'}`;
-        if(!rows.length){ body.innerHTML=`<tr><td colspan="8" class="recon-empty">No ${batchTab==='pending'?'pending':'past'} batches.</td></tr>`; return; }
+        const warn=(hist&&historyError)?`<tr><td colspan="${cols}" class="recon-empty integ-bad">Batch history could not be loaded (${reconEsc(historyError)}) — the audit columns below are incomplete.</td></tr>`:'';
+        if(!rows.length){ body.innerHTML=warn+`<tr><td colspan="${cols}" class="recon-empty">${q?'No batches match.':`No ${hist?'past':'pending'} batches.`}</td></tr>`; return; }
         const money=v=>{const n=parseFloat(v);return isNaN(n)?'':'$'+n.toFixed(2);};
-        body.innerHTML=rows.map(b=>{ const f=b.f, st=(f.Status||'').toLowerCase(), fc=parseInt(f.FlagCount)||0;
+        body.innerHTML=warn+rows.map(b=>{ const f=b.f, st=(f.Status||'').toLowerCase(), fc=parseInt(f.FlagCount)||0;
+            const badge=`<td><span class="status-badge status-${st==='pending_approval'?'submitted':st}">${reconEsc(f.Status||'')}</span></td>`;
             return `<tr class="main-row" onclick="openBatchDetail('${b.id}')">
                 <td>${reconEsc(f.BatchRef||f.Title)}</td><td>${reconEsc(batchPeriod(f))}</td><td>${reconEsc(f.PreparedBy)}</td>
-                <td class="num">${reconEsc(f.ReceiptCount||'')}</td><td class="num">${money(f.TotalAmount)}</td><td class="num">${money(f.TotalGST)}</td>
-                <td class="num ${fc?'appr-flag':''}">${fc||''}</td>
-                <td><span class="status-badge status-${st==='pending_approval'?'submitted':st}">${reconEsc(f.Status||'')}</span></td></tr>`;
+                <td class="num">${reconEsc(f.ReceiptCount||'')}</td><td class="num">${money(f.TotalAmount)}</td><td class="num">${money(f.TotalGST)}</td>`+
+                (hist ? badge+`<td>${reconEsc(f.ApprovedBy||'')}</td><td>${reconEsc(fmtRegina(f.ApprovedAt,true))}</td><td>${reconEsc(f.SageJournalRef||'')}</td>`+integrityCell((batchIndex.get(b.id)||{}).integ)
+                      : `<td class="num ${fc?'appr-flag':''}">${fc||''}</td>`+badge)+`</tr>`;
         }).join('');
     }
 
+    let _bdBatchId=null;
     async function openBatchDetail(batchId){
         const b=batchAll.find(x=>x.id===batchId); if(!b) return;
+        _bdBatchId=batchId;
         document.getElementById('bdTitle').textContent=`Batch ${b.f.BatchRef||b.f.Title||''}`;
         document.getElementById('bdSummary').innerHTML='<div class="bd-meta">Loading receipts…</div>';
-        document.getElementById('bdReceipts').innerHTML=''; document.getElementById('bdActions').innerHTML='';
+        ['bdRecord','bdReceipts','bdHistory','bdActions'].forEach(id=>document.getElementById(id).innerHTML='');
         _bdFlaggedOnly=false;
         document.getElementById('batchDetailModal').classList.add('active');
         try{
-            const ref=b.f.BatchRef||'§none';
+            // Always a fresh read: this view is where a change after approval
+            // gets caught, so it must not trust the list loaded minutes ago.
+            batchClaimsAll=await loadListItems(CONFIG.receiptClaimsList);
+            try{ historyAll=await loadListItems(CONFIG.receiptBatchHistoryList); historyError=''; }
+            catch(e){ console.error(e); historyError=e.message; }
             // voidBlockReason() refuses to void anything holding a BatchRef, so a
             // voided claim should never be in a batch — belt and braces anyway.
-            _bdClaims=(await loadListItems(CONFIG.receiptClaimsList)).filter(r=>(r.f.BatchRef||'')===ref && !isVoidRow(r));
+            _bdClaims=((b.f.Status||'').toLowerCase()==='returned')
+                ? returnedSnapshot(b).map(s=>snapAsClaim(s, batchClaimsAll))
+                : batchMembers(b, batchClaimsAll);
             renderBatchDetail(b);
         }catch(e){ console.error(e);
             document.getElementById('bdSummary').innerHTML=`<div class="bd-meta">Could not load receipts: ${reconEsc(e.message)}</div>`;
@@ -4420,32 +4877,143 @@
         const provRows=Object.keys(byProv).sort().map(k=>line(k,byProv[k])).join('');
         const grand=`<tr class="bd-total"><td>Grand total</td><td class="num">${claims.length}</td><td class="num">$${n2(tSub)}</td><td class="num">$${n2(tGst)}</td><td class="num">$${n2(tProv)}</td><td class="num">$${n2(tTot)}</td></tr>`;
         const fc=claims.filter(r=>r.f.Flag).length;
-        document.getElementById('bdSummary').innerHTML=
-            `<div class="bd-meta">Period ${reconEsc(batchPeriod(f)||'—')} · Prepared by ${reconEsc(f.PreparedBy||'—')} · ${claims.length} receipts · ${fc} flagged · Status: <b>${reconEsc(f.Status||'')}</b>${f.ApprovedBy?` · Approved by ${reconEsc(f.ApprovedBy)} (${(f.ApprovedAt||'').slice(0,10)})`:''}</div>`+
-            `<div class="bd-card"><h4>Totals by category</h4><table class="bd-table"><thead><tr><th>Category</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${catRows}${grand}</tbody></table></div>`+
-            `<div class="bd-card"><h4>Totals by province</h4><table class="bd-table"><thead><tr><th>Province</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${provRows}</tbody></table></div>`+
-            `<div class="bd-card"><h4>Rebate &amp; notes</h4>GST rebate (50%): <b>$${n2(tGst*0.5)}</b><br>${f.AccountantNotes?('Notes from Emmanuel: '+reconEsc(f.AccountantNotes)):'No accountant notes.'}${f.ReturnNotes?('<br>Return notes: '+reconEsc(f.ReturnNotes)):''}</div>`;
-        renderBatchReceipts();
         const st=(f.Status||'').toLowerCase();
+        document.getElementById('bdSummary').innerHTML=
+            `<div class="bd-meta">Period ${reconEsc(batchPeriod(f)||'—')} · Prepared by ${reconEsc(f.PreparedBy||'—')}${f.PreparedAt?` on ${reconEsc(fmtRegina(f.PreparedAt))}`:''} · ${claims.length} receipts · ${fc} flagged · Status: <b>${reconEsc(f.Status||'')}</b>${f.SageJournalRef?` · Sage entry <b>${reconEsc(f.SageJournalRef)}</b>`:''}</div>`+
+            // The integrity verdict goes straight under the header: someone opening a
+            // batch that changed after approval should see that before the totals.
+            ((st==='pending_approval'||st==='approved')?'<div id="bdIntegrity"></div>':'')+
+            `<div class="bd-card"><h4>Totals by category${st==='returned'?' (as returned)':''}</h4><table class="bd-table"><thead><tr><th>Category</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${catRows}${grand}</tbody></table></div>`+
+            `<div class="bd-card"><h4>Totals by province</h4><table class="bd-table"><thead><tr><th>Province</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${provRows}</tbody></table></div>`+
+            `<div class="bd-card bd-keep"><h4>Rebate &amp; notes</h4>GST rebate (50%): <b>$${n2(tGst*0.5)}</b><br>${f.AccountantNotes?('Notes from Emmanuel: '+reconEsc(f.AccountantNotes)):'No accountant notes.'}${f.ReturnNotes?('<br>Return notes: '+reconEsc(f.ReturnNotes)):''}</div>`;
+        renderBatchRecord(b);
+        renderBatchReceipts();
+        renderBatchHistory(b);
         let a=`<button class="btn btn-outline btn-sm" id="bdFlagBtn" onclick="toggleBdFlagged()">View flagged only</button>`+
-              `<button class="btn btn-outline btn-sm" onclick="window.print()">Print</button>`;
+              `<button class="btn btn-outline btn-sm" onclick="printBatch()">Print</button>`;
         // Approve / Return only for the approver (Bernie) on a pending batch.
         // Emmanuel (accountant) views the same detail read-only to check status / print.
         if(st==='pending_approval' && receiptRoles.approver===true){
             a+=`<button class="btn btn-outline btn-sm" style="border-color:#a11111;color:#a11111;" onclick="returnBatch('${b.id}')">Return to Emmanuel</button>`+
-               `<button class="btn btn-success btn-sm" onclick="approveBatch('${b.id}')">Approve</button>`;
+               `<button class="btn btn-success btn-sm" onclick="openApproveModal('${b.id}')">Approve…</button>`;
         }
         a+=`<button class="btn btn-primary btn-sm" onclick="closeBatchDetail()">Close</button>`;
         document.getElementById('bdActions').innerHTML=a;
+        renderBatchIntegrity(b);
+    }
+
+    // The approval / return record and the Sage link, as the batch holds them.
+    function renderBatchRecord(b){
+        const f=b.f, st=(f.Status||'').toLowerCase(), E=reconEsc;
+        const row=(k,v)=>`<tr><th style="width:11em;">${k}</th><td class="wrap">${v}</td></tr>`;
+        const money=v=>{const n=parseFloat(v);return isNaN(n)?'—':'$'+n.toFixed(2);};
+        let h='';
+        const miss=missingEvents(b);
+        if(miss.length) h+=`<div class="integrity integrity-bad no-print">The batch history is missing its <b>${miss.join(', ')}</b> entr${miss.length===1?'y':'ies'} — the write failed at the time. The batch’s own record has everything needed to write ${miss.length===1?'it':'them'} now. `+
+            `<button class="btn btn-outline btn-sm" onclick="recordMissingEvents('${b.id}')">Record ${miss.length===1?'it':'them'}</button></div>`;
+        if(st==='approved'){
+            const legacy=!f.ApprovalFingerprint;
+            h+=`<div class="bd-card bd-keep"><h4>Approval record</h4><table class="bd-table"><tbody>`+
+               row('Approved by', `${E(f.ApprovedBy||'—')}${f.ApprovedByUPN?` <span class="fp">(${E(f.ApprovedByUPN)})</span>`:''}`)+
+               row('Approved at', E(fmtRegina(f.ApprovedAt))||'—')+
+               (legacy
+                 ? row('Record', 'Approved before approval records were kept (from 2026-09-24). The name and time are what the batch stored then; there is no account check, statement or fingerprint for this approval.')
+                 : row('At approval', `${E(f.ApprovedReceiptCount)} receipts · total ${money(f.ApprovedTotal)} · GST ${money(f.ApprovedGST)}`)+
+                   row('Statement affirmed', E(f.ApprovalStatement||'—'))+
+                   row('Fingerprint', `<span class="fp">${E(f.ApprovalFingerprint)}</span>`))+
+               `</tbody></table></div>`;
+            const canPost=receiptRoles.accountant!==false;
+            const lab='display:block;font-size:12px;color:var(--text-light);margin-bottom:2px;';
+            h+=`<div class="bd-card bd-keep"><h4>Sage General Journal</h4>`+
+               (f.SageJournalRef
+                 ? `Posted as entry <b>${E(f.SageJournalRef)}</b>${f.PostedBy?` — recorded by ${E(f.PostedBy)}`:''}${f.PostedAt?` on ${E(fmtRegina(f.PostedAt))}`:''}.`
+                 : 'Not yet recorded. Once this batch is keyed into Sage, record the journal entry number here so the entry and this batch can be traced to each other.')+
+               (canPost?`<div class="sage-row no-print" style="margin-top:10px;">`+
+                   `<div><label for="sageRef" style="${lab}">${f.SageJournalRef?'Correct the entry number':'Journal entry number'}</label><input id="sageRef" placeholder="J674" autocomplete="off" spellcheck="false"></div>`+
+                   (f.SageJournalRef?`<div style="flex:1 1 220px;"><label for="sageReason" style="${lab}">Why it’s being corrected (recorded)</label><input id="sageReason" style="width:100%;"></div>`:'')+
+                   `<button class="btn btn-primary btn-sm" onclick="recordSagePosting('${b.id}')">${f.SageJournalRef?'Correct':'Record'}</button></div>`:'')+
+               `</div>`;
+        }
+        if(st==='returned'){
+            const s=returnedSnapshot(b), t=snapTotals(s);
+            h+=`<div class="bd-card bd-keep"><h4>Return record</h4><table class="bd-table"><tbody>`+
+               row('Returned by', f.ReturnedBy?`${E(f.ReturnedBy)}${f.ReturnedByUPN?` <span class="fp">(${E(f.ReturnedByUPN)})</span>`:''}`:'— (returned before return records were kept)')+
+               row('Returned at', E(fmtRegina(f.ReturnedAt))||'—')+
+               row('Notes', f.ReturnNotes?E(f.ReturnNotes):'<i>(none given)</i>')+
+               row('Held when returned', s.length?`${t.n} receipts · total $${t.total.toFixed(2)} · GST $${t.gst.toFixed(2)} — freed back to reconciled`:'Not recorded — returned before batch history was kept.')+
+               `</tbody></table></div>`;
+        }
+        document.getElementById('bdRecord').innerHTML=h;
+    }
+
+    // Filled in after the render: hashing is async.
+    async function renderBatchIntegrity(b){
+        const el=document.getElementById('bdIntegrity'); if(!el) return;
+        const st=(b.f.Status||'').toLowerCase(), E=reconEsc;
+        const list=d=>d.length?`<ul>${d.slice(0,30).map(x=>`<li>${E(x)}</li>`).join('')}${d.length>30?`<li>…and ${d.length-30} more</li>`:''}</ul>`:'';
+        try{
+            if(st==='pending_approval'){
+                const ev=lastEvent(b.f.BatchRef||'','created');
+                if(!ev||!ev.f.Fingerprint){ el.innerHTML=''; return; }
+                const now=batchSnapshot(_bdClaims), fp=await fingerprintSnap(now);
+                el.innerHTML = fp===ev.f.Fingerprint
+                    ? `<div class="integrity integrity-ok">Unchanged since it was submitted for approval on ${E(fmtRegina(ev.f.EventAt))}.</div>`
+                    : `<div class="integrity integrity-bad"><b>Changed since it was submitted for approval</b> on ${E(fmtRegina(ev.f.EventAt))}:${list(snapDiff(parseSnap(ev.f.Snapshot), now))}</div>`;
+                return;
+            }
+            const i=await batchIntegrity(b, batchClaimsAll);
+            const when=i.basisAt?` (${E(fmtRegina(i.basisAt))})`:'';
+            let h='';
+            if(i.state==='match') h=i.basis==='baseline'
+                ? `<div class="integrity integrity-info"><b>Unchanged since the baseline</b> taken when records began${when}. That baseline was recorded after approval, so it cannot show what was approved — only that nothing has moved since.</div>`
+                : `<div class="integrity integrity-ok"><b>Receipts match what was approved.</b> The fingerprint recomputed just now equals the one taken at approval.</div>`;
+            else if(i.state==='changed') h=`<div class="integrity integrity-bad"><b>The receipts have changed since ${i.basis==='baseline'?'the baseline was taken':'approval'}</b>${when}. The console doesn’t allow this, so the change was made outside it (e.g. directly in SharePoint):${list(i.diff)}</div>`;
+            else if(i.state==='version') h=`<div class="integrity integrity-info">This approval’s fingerprint uses an older format and can’t be recomputed by this version of the console.</div>`;
+            else h=`<div class="integrity integrity-info">No fingerprint exists for this batch, so its receipts can’t be checked against the approval.</div>`;
+            if(i.disagree) h+=`<div class="integrity integrity-bad"><b>The batch and its history disagree</b> about the approved fingerprint — one of them was edited after approval.</div>`;
+            el.innerHTML=h;
+        }catch(e){ console.error(e); el.innerHTML=`<div class="integrity integrity-bad">Couldn’t check the receipts against the approval: ${E(e.message)}</div>`; }
+    }
+
+    const EVENT_LABEL={ created:'Submitted for approval', returned:'Returned', resubmitted:'Receipts re-batched',
+        approved:'Approved', posted:'Posted to Sage', posting_corrected:'Sage entry corrected' };
+    function renderBatchHistory(b){
+        const el=document.getElementById('bdHistory'), E=reconEsc;
+        if(historyError){ el.innerHTML=`<div class="bd-card"><h4>History</h4><div class="integrity integrity-bad">The batch history could not be loaded: ${E(historyError)}</div></div>`; return; }
+        const evs=eventsFor(b.f.BatchRef||'');
+        const rows=evs.map(h=>{ const x=h.f, src=x.Source||'live';
+            return `<tr><td>${E(fmtRegina(x.EventAt))}</td>`+
+                `<td>${E(EVENT_LABEL[x.EventType]||x.EventType||'')}${src!=='live'?`<br><span class="ev-src">${E(src)}</span>`:''}</td>`+
+                `<td>${E(x.ActorName||'—')}${x.ActorUPN?`<br><span class="fp">${E(x.ActorUPN)}</span>`:''}</td>`+
+                `<td class="num">${x.ReceiptCount!=null?E(x.ReceiptCount):''}</td><td class="num">${x.GrandTotal!=null?'$'+(+x.GrandTotal).toFixed(2):''}</td>`+
+                `<td class="wrap ev-notes">${E(x.Notes||'')}${x.Fingerprint?`<br><span class="fp">${E(x.Fingerprint.slice(0,19))}…</span>`:''}</td>`+
+                `<td>${E(h.by||'')}<br><span class="fp">${E(fmtRegina(h.created))}</span></td></tr>`; }).join('');
+        el.innerHTML=`<div class="bd-card"><h4>History</h4>`+
+            (rows?`<table class="bd-table"><thead><tr><th>When</th><th>Event</th><th>By</th><th class="num">Receipts</th><th class="num">Total</th><th>Notes</th><th>Written to SharePoint by</th></tr></thead><tbody>${rows}</tbody></table>`+
+                  `<div class="bd-meta" style="margin:6px 0 0;">“Written to SharePoint by” is SharePoint’s own stamp on each entry, which the console cannot set. <i>Reconstructed</i> = rebuilt from older records; <i>recovered</i> = written after a failed save, from the batch’s own record.</div>`
+                 :'<div class="bd-meta">No history recorded for this batch.</div>')+`</div>`;
     }
 
     function renderBatchReceipts(){
+        const b=batchAll.find(x=>x.id===_bdBatchId), returned=b&&(b.f.Status||'').toLowerCase()==='returned';
         let rows=_bdClaims; if(_bdFlaggedOnly) rows=rows.filter(r=>r.f.Flag);
         const money=v=>{const n=parseFloat(v);return isNaN(n)?'':'$'+n.toFixed(2);};
-        const body=rows.map(r=>{const x=r.f;return `<tr class="main-row" onclick="viewBatchReceipt('${r.id}')"><td>${reconEsc(x.ReceiptRef)}</td><td>${reconEsc((x.ReceiptDate||'').slice(0,10))}</td><td>${reconEsc(x.Vendor)}</td><td>${reconEsc(x.Province)}</td><td>${reconEsc(x.SubmittedBy)}</td><td>${reconEsc(x.CategoryLabel)}</td><td>${reconEsc(x.Description)}</td><td class="num">${money(x.GSTAmount)}</td><td class="num">${money(x.TotalAmount)}</td><td class="appr-flag">${reconEsc(x.Flag)}</td></tr>`;}).join('');
-        document.getElementById('bdReceipts').innerHTML=`<div class="bd-card"><h4>Receipts (${rows.length}) <span style="font-weight:400;color:var(--text-light);font-size:12px;">— click a row to view the receipt image</span></h4><table class="bd-table"><thead><tr><th>Ref</th><th>Date</th><th>Vendor</th><th>Prov</th><th>Submitter</th><th>Category</th><th>Note</th><th class="num">GST</th><th class="num">Total</th><th>Flag</th></tr></thead><tbody>${body||'<tr><td colspan="10" class="recon-empty">None.</td></tr>'}</tbody></table></div>`;
+        const body=rows.map(r=>{const x=r.f;return `<tr class="main-row" onclick="viewBatchReceipt('${r.id}')"><td>${reconEsc(x.ReceiptRef)}</td><td>${reconEsc((x.ReceiptDate||'').slice(0,10))}</td><td>${reconEsc(x.Vendor)}</td><td>${reconEsc(x.Province)}</td><td>${reconEsc(x.SubmittedBy)}</td><td>${reconEsc(x.CategoryLabel)}</td><td class="wrap">${reconEsc(x.Description)}</td><td class="num">${money(x.GSTAmount)}</td><td class="num">${money(x.TotalAmount)}</td><td class="appr-flag">${reconEsc(x.Flag)}</td></tr>`;}).join('');
+        const title=returned?`Receipts as they were when returned (${rows.length})`:`Receipts (${rows.length})`;
+        document.getElementById('bdReceipts').innerHTML=`<div class="bd-card"><h4>${title} <span class="no-print" style="font-weight:400;color:var(--text-light);font-size:12px;">— click a row to view the receipt image</span></h4><table class="bd-table"><thead><tr><th>Ref</th><th>Date</th><th>Vendor</th><th>Prov</th><th>Submitter</th><th>Category</th><th>Note</th><th class="num">GST</th><th class="num">Total</th><th>Flag</th></tr></thead><tbody>${body||'<tr><td colspan="10" class="recon-empty">None.</td></tr>'}</tbody></table></div>`;
     }
     function toggleBdFlagged(){ _bdFlaggedOnly=!_bdFlaggedOnly; renderBatchReceipts(); const btn=document.getElementById('bdFlagBtn'); if(btn) btn.textContent=_bdFlaggedOnly?'Show all':'View flagged only'; }
+
+    // The printed sheet is the evidence attached to the General Journal, so it
+    // is always the WHOLE batch (never the flagged-only view) and says who
+    // printed it and when.
+    function printBatch(){
+        if(_bdFlaggedOnly) toggleBdFlagged();
+        const a=actorIdentity();
+        document.getElementById('bdPrintMeta').textContent=
+            `Canadian Midwest District — receipt batch record · printed ${fmtRegina(new Date().toISOString())} by ${a.name||a.upn||'—'} from ${location.hostname}`;
+        window.print();
+    }
 
     // View a single receipt (image + full details incl. the note) from a batch — for approval verification.
     function viewBatchReceipt(id){
@@ -4493,45 +5061,159 @@
         return true;
     }
 
-    async function approveBatch(batchId){
+    // ---- Approve (#797: statement + identity + fingerprint) ----
+    // Bernie ticks one statement and presses one button — nothing to type.
+    // What he saw is fingerprinted when the dialog opens; at confirm the
+    // receipts are re-read live and must still produce that fingerprint, so
+    // an edit made while the dialog sat open can't slip in under his approval.
+    let _ap=null;
+    async function openApproveModal(batchId){
         const b=batchAll.find(x=>x.id===batchId); if(!b) return;
-        if(!confirm(`Approve batch ${b.f.BatchRef||''}? This marks all ${_bdClaims.length} receipt(s) approved.`)) return;
-        if(!(await batchStillPending(b))) return;
-        const who=(currentUser&&(currentUser.name||currentUser.username))||'', now=new Date().toISOString();
-        // Receipts FIRST (idempotent skip), batch status LAST — so a mid-loop failure
-        // leaves the batch reachable (still pending) and the Approve retryable.
-        const failed=[];
-        for(const r of _bdClaims){
-            if((r.f.Status||'').toLowerCase()==='approved') continue;
-            try{ await reconPatch(r.id, {Status:'approved', ApprovedBy:who, ApprovedAt:now}); r.f.Status='approved'; r.f.ApprovedBy=who; r.f.ApprovedAt=now; }
-            catch(e){ console.error(e); failed.push(r.f.ReceiptRef||r.id); }
-        }
-        if(failed.length){ showToast(`${_bdClaims.length-failed.length}/${_bdClaims.length} receipts updated — batch left pending. Failed: ${failed.join(', ')}. Retry Approve.`); return; }
-        try{
-            await batchPatch(b.id, {Status:'approved', ApprovedBy:who, ApprovedAt:now});
-            b.f.Status='approved'; b.f.ApprovedBy=who; b.f.ApprovedAt=now;
-            showToast(`Batch ${b.f.BatchRef||''} approved.`); closeBatchDetail(); renderBatches();
-        }catch(e){ console.error(e); showToast('Receipts approved, but batch status didn’t save — retry Approve. '+e.message); }
+        const a=actorIdentity();
+        if(!a.upn){ showToast('Can’t read your signed-in account — sign out and back in, then approve.'); return; }
+        const snap=batchSnapshot(_bdClaims), t=snapTotals(snap), ref=b.f.BatchRef||'';
+        const statement=approvalStatement(ref, t.n, t.total, t.gst, a.name||a.upn);
+        _ap={ batchId, statement, fp:await fingerprintSnap(snap) };
+        const fc=_bdClaims.filter(r=>r.f.Flag).length;
+        document.getElementById('apTitle').textContent=`Approve ${ref}`;
+        document.getElementById('apBody').innerHTML=
+            `<div class="appr-id">Signed in as <b>${reconEsc(a.name||a.upn)}</b> · <span class="fp">${reconEsc(a.upn)}</span><br>`+
+            `<span style="font-size:13px;color:var(--text-light);">The approval is recorded against this Microsoft account, with the time and a fingerprint of these receipts.</span></div>`+
+            (fc?`<div class="integrity integrity-info" style="margin-top:12px;">${fc} of these receipts ${fc===1?'is':'are'} flagged — use “View flagged only” to check ${fc===1?'it':'them'} first.</div>`:'')+
+            `<label class="appr-statement"><input type="checkbox" id="apAffirm" onchange="document.getElementById('apConfirmBtn').disabled=!this.checked"><span>${reconEsc(statement)}</span></label>`;
+        const btn=document.getElementById('apConfirmBtn'); btn.disabled=true; btn.textContent='Approve batch';
+        document.getElementById('approveModal').classList.add('active');
+    }
+    function closeApproveModal(){ document.getElementById('approveModal').classList.remove('active'); _ap=null; }
+    async function confirmApprove(){
+        if(!_ap || !document.getElementById('apAffirm').checked) return;
+        const b=batchAll.find(x=>x.id===_ap.batchId); if(!b) return;
+        const btn=document.getElementById('apConfirmBtn'); btn.disabled=true; btn.textContent='Approving…';
+        try{ await approveBatch(b, _ap); }
+        finally{ btn.textContent='Approve batch'; const cb=document.getElementById('apAffirm'); btn.disabled=!(cb&&cb.checked); }
     }
 
+    // Order (each step only if the one before succeeded):
+    //  1. batch still pending (live)     2. history log reachable
+    //  3. receipts re-read live; fingerprint must equal what was on screen
+    //  4. receipts -> approved (per-item, idempotent skip; any failure stops
+    //     here with the batch still pending, so Approve is simply retryable)
+    //  5. batch -> approved WITH its approval record, in one PATCH
+    //  6. history 'approved' event. A failure here leaves a correctly approved
+    //     batch that carries its own record; missingEvents() offers to write
+    //     the entry from it. The approval is never unwound over a log write.
+    async function approveBatch(b, ap){
+        if(!(await batchStillPending(b))){ closeApproveModal(); return; }
+        const hErr=await historyReachable();
+        if(hErr){ showToast(`The approval can’t be recorded right now (${hErr}) — nothing was changed.`); return; }
+        let claims;
+        try{ claims=await loadListItems(CONFIG.receiptClaimsList); }
+        catch(e){ console.error(e); showToast('Couldn’t re-read the receipts — nothing was changed. '+e.message); return; }
+        batchClaimsAll=claims;
+        const members=batchMembers(b, claims), snap=batchSnapshot(members), fp=await fingerprintSnap(snap);
+        if(fp!==ap.fp){
+            closeApproveModal();
+            showToast('This batch changed after you opened it, so nothing was approved. It has been reloaded — please look it over again.');
+            await openBatchDetail(b.id); return;
+        }
+        const a=actorIdentity(), who=a.name||a.upn, now=new Date().toISOString(), t=snapTotals(snap), ref=b.f.BatchRef||'';
+        const failed=[];
+        for(const r of members){
+            if((r.f.Status||'').toLowerCase()==='approved') continue;
+            // BatchRef rides along so a receipt freed by a half-finished Return
+            // is re-attached to the batch it is being approved in.
+            const up={Status:'approved', ApprovedBy:who, ApprovedAt:now, BatchRef:ref};
+            try{ await reconPatch(r.id, up); Object.assign(r.f, up); }
+            catch(e){ console.error(e); failed.push(r.f.ReceiptRef||r.id); }
+        }
+        if(failed.length){ showToast(`${members.length-failed.length}/${members.length} receipts updated — batch left pending. Failed: ${failed.join(', ')}. Retry Approve.`); return; }
+        const record={ Status:'approved', ApprovedBy:who, ApprovedAt:now, ApprovedByUPN:a.upn, ApprovedByOid:a.oid,
+            ApprovalStatement:ap.statement, ApprovalFingerprint:fp, ApprovedReceiptCount:t.n, ApprovedTotal:t.total,
+            ApprovedGST:t.gst, ApprovalSnapshot:JSON.stringify(snap) };
+        try{ await batchPatch(b.id, record); Object.assign(b.f, record); }
+        catch(e){ console.error(e); showToast('Receipts approved, but the batch didn’t save — retry Approve. '+e.message); return; }
+        closeApproveModal();
+        try{
+            await batchHistoryAppend({batchRef:ref, batchItemId:b.id, type:'approved', at:now, actor:a, snapshot:snap, fingerprint:fp, notes:ap.statement});
+            showToast(`Batch ${ref} approved.`);
+        }catch(e){ console.error(e); showToast(`Batch ${ref} is approved and carries its approval record, but the history entry didn’t save — open the batch to record it.`); }
+        closeBatchDetail(); refreshBatchIndex();
+    }
+
+    // Order mirrors approve: live pending check, log reachable, snapshot what
+    // the batch holds (BEFORE freeing — afterwards nothing points at it),
+    // free the receipts, then the batch PATCH carries the return record and
+    // snapshot, then the history event.
     async function returnBatch(batchId){
         const b=batchAll.find(x=>x.id===batchId); if(!b) return;
         const notes=prompt('Return to Emmanuel — what needs fixing?', '');
         if(notes===null) return;
         if(!(await batchStillPending(b))) return;
+        const hErr=await historyReachable();
+        if(hErr){ showToast(`The return can’t be recorded right now (${hErr}) — nothing was changed.`); return; }
+        let claims;
+        try{ claims=await loadListItems(CONFIG.receiptClaimsList); }
+        catch(e){ console.error(e); showToast('Couldn’t re-read the receipts — nothing was changed. '+e.message); return; }
+        batchClaimsAll=claims;
+        const members=batchMembers(b, claims), snap=batchSnapshot(members), fp=await fingerprintSnap(snap);
+        const a=actorIdentity(), now=new Date().toISOString(), ref=b.f.BatchRef||'';
         // Free the receipts FIRST (clear BatchRef, back to reconciled), batch status LAST.
         const failed=[];
-        for(const r of _bdClaims){
+        for(const r of members){
             if(!(r.f.BatchRef||'')) continue;   // already freed
             try{ await reconPatch(r.id, {BatchRef:'', Status:'reconciled'}); r.f.BatchRef=''; r.f.Status='reconciled'; }
             catch(e){ console.error(e); failed.push(r.f.ReceiptRef||r.id); }
         }
-        if(failed.length){ showToast(`${_bdClaims.length-failed.length}/${_bdClaims.length} receipts freed — batch left pending. Failed: ${failed.join(', ')}. Retry Return.`); return; }
+        if(failed.length){ showToast(`${members.length-failed.length}/${members.length} receipts freed — batch left pending. Failed: ${failed.join(', ')}. Retry Return.`); return; }
+        const record={ Status:'returned', ReturnNotes:notes, ReturnedBy:a.name||a.upn, ReturnedByUPN:a.upn, ReturnedAt:now, ReturnSnapshot:JSON.stringify(snap) };
+        try{ await batchPatch(b.id, record); Object.assign(b.f, record); }
+        catch(e){ console.error(e); showToast('Receipts freed, but batch status didn’t save — retry Return. '+e.message); return; }
         try{
-            await batchPatch(b.id, {Status:'returned', ReturnNotes:notes});
-            b.f.Status='returned'; b.f.ReturnNotes=notes;
-            showToast(`Batch ${b.f.BatchRef||''} returned to Emmanuel.`); closeBatchDetail(); renderBatches();
-        }catch(e){ console.error(e); showToast('Receipts freed, but batch status didn’t save — retry Return. '+e.message); }
+            await batchHistoryAppend({batchRef:ref, batchItemId:b.id, type:'returned', at:now, actor:a, snapshot:snap, fingerprint:fp, notes});
+            showToast(`Batch ${ref} returned to Emmanuel.`);
+        }catch(e){ console.error(e); showToast(`Batch ${ref} is returned and carries its return record, but the history entry didn’t save — open the batch to record it.`); }
+        closeBatchDetail(); refreshBatchIndex();
+    }
+
+    // ---- Sage link (#797) ----
+    // Emmanuel records the General Journal entry number once he has keyed the
+    // batch, so a J-number traces to its approved batch and back. A number
+    // already recorded is corrected, never silently overwritten: a reason is
+    // required and both numbers go in the history.
+    function normJournalRef(s){ const m=String(s||'').trim().match(/^j?\s*-?\s*0*(\d{1,7})$/i); return m?('J'+m[1]):''; }
+    async function recordSagePosting(batchId){
+        const b=batchAll.find(x=>x.id===batchId); if(!b) return;
+        const jr=normJournalRef((document.getElementById('sageRef')||{}).value);
+        if(!jr){ showToast('Enter the Sage journal entry number, e.g. J674.'); return; }
+        const prior=(b.f.SageJournalRef||'').trim();
+        let reason='';
+        if(prior){
+            if(jr===prior){ showToast(`${jr} is already the recorded entry.`); return; }
+            reason=((document.getElementById('sageReason')||{}).value||'').trim();
+            if(reason.length<3){ showToast('Say why the entry number is being corrected — it’s recorded with the change.'); return; }
+        }
+        const dup=batchAll.find(x=>x.id!==b.id && (x.f.SageJournalRef||'').toUpperCase()===jr);
+        if(dup && !confirm(`${jr} is already recorded against ${dup.f.BatchRef}. Record it against ${b.f.BatchRef} as well?`)) return;
+        let live;
+        try{ live=(await getBatchStatus(b.id)).toLowerCase(); }
+        catch(e){ console.error(e); showToast('Could not verify batch status — '+e.message); return; }
+        if(live!=='approved'){ showToast(`Only an approved batch can be posted — this one is ${live||'unknown'}.`); return; }
+        const hErr=await historyReachable();
+        if(hErr){ showToast(`The posting can’t be recorded right now (${hErr}) — nothing was changed.`); return; }
+        // Snapshot at posting too: proves what the batch held when it was keyed.
+        let snap=null, fp='';
+        try{ batchClaimsAll=await loadListItems(CONFIG.receiptClaimsList); snap=batchSnapshot(batchMembers(b, batchClaimsAll)); fp=await fingerprintSnap(snap); }
+        catch(e){ console.error(e); }
+        const a=actorIdentity(), now=new Date().toISOString(), ref=b.f.BatchRef||'';
+        const record={ SageJournalRef:jr, PostedBy:a.name||a.upn, PostedByUPN:a.upn, PostedAt:now };
+        try{ await batchPatch(b.id, record); Object.assign(b.f, record); }
+        catch(e){ console.error(e); showToast('Couldn’t save the journal entry number — nothing was changed. '+e.message); return; }
+        const notes=prior ? `Sage General Journal entry corrected from ${prior} to ${jr}. Reason: ${reason}` : `Posted to Sage as General Journal entry ${jr}.`;
+        try{
+            await batchHistoryAppend({batchRef:ref, batchItemId:b.id, type:prior?'posting_corrected':'posted', at:now, actor:a, sageRef:jr, snapshot:snap, fingerprint:fp, notes});
+            showToast(prior?`Corrected to ${jr}.`:`Recorded ${ref} as ${jr}.`);
+        }catch(e){ console.error(e); showToast(`${jr} is saved on the batch, but the history entry didn’t save — it’s offered for recording on the batch.`); }
+        renderBatchDetail(b); refreshBatchIndex();
     }
 
     // Init
