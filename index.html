@@ -916,6 +916,17 @@
         .sage-row input { padding:7px 9px; border:1px solid #8a8886; border-radius:6px; font-family:inherit; font-size:15px; width:9em; }
         .hist-search { padding:7px 10px; border:1px solid #8a8886; border-radius:6px; font-family:inherit; font-size:15px; min-width:260px; margin-bottom:12px; }
         #bdPrintMeta { display:none; }
+        /* #800 no-receipt marking — measured in the harness like the rest. */
+        .nr-badge { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:700;
+                    background:#fff1dc; color:#7a3e00; border:1px solid #f0c98f; white-space:nowrap; }
+        .nr-text { color:#7a3e00; }
+        .nr-banner { grid-column:1 / -1; background:#fff1dc; border:1px solid #f0c98f; border-radius:8px;
+                     padding:10px 12px; font-size:13px; color:#5c2f00; line-height:1.5; }
+        .nr-form .fld { margin-bottom:10px; }
+        .nr-form label { display:block; font-size:12px; color:var(--text-light); margin-bottom:2px; font-weight:600; }
+        .nr-form input, .nr-form select, .nr-form textarea { width:100%; padding:7px 9px; border:1px solid #8a8886; border-radius:6px; font-family:inherit; font-size:15px; box-sizing:border-box; }
+        .nr-form .row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+        .nr-tax { background:#f7f9fb; border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:13px; margin-bottom:10px; }
         td.integ-ok { color:#0b5a0b; font-weight:600; } td.integ-bad { color:#8a0e0e; font-weight:700; } td.integ-info { color:#3b3a39; }
         .flag-cell { color:#a11111; font-weight:600; white-space:normal; }
         .recon-prov-select { padding:2px 4px; border:1px solid var(--border); border-radius:4px; font-family:inherit; font-size:12px; }
@@ -1511,7 +1522,7 @@
         <div class="field"><label>To</label><input type="date" id="reconTo" onchange="renderReconciliation()"></div>
         <div class="field"><label>Submitter</label><select id="reconSubmitter" onchange="renderReconciliation()"><option value="">All</option></select></div>
         <div class="field"><label>Category</label><select id="reconCategory" onchange="renderReconciliation()"><option value="">All</option></select></div>
-        <div class="field"><label>Source</label><select id="reconSource" onchange="renderReconciliation()"><option value="">All</option><option value="email">Emailed in</option><option value="mobile">Phone capture</option></select></div>
+        <div class="field"><label>Source</label><select id="reconSource" onchange="renderReconciliation()"><option value="">All</option><option value="email">Emailed in</option><option value="mobile">Phone capture</option><option value="console">Entered in console (no receipt)</option></select></div>
         <div class="field"><button class="btn btn-outline btn-sm" onclick="clearReconFilters()">Clear filters</button></div>
     </div>
     <div class="recon-actionsbar">
@@ -1524,6 +1535,7 @@
         <div class="recon-action-btns">
             <button class="btn btn-primary btn-sm" onclick="openBatchModal()">Create Batch for Approval</button>
             <button class="btn btn-outline btn-sm" onclick="openJournalEntry()">General Journal Entry</button>
+            <button class="btn btn-outline btn-sm" id="btnNoReceipt" onclick="openNoReceiptModal()">Add entry without a receipt…</button>
         </div>
     </div>
     <div class="recon-bulkbar" id="reconBulkBar">
@@ -1641,6 +1653,37 @@
         <div style="display:flex; gap:10px; justify-content:flex-end;">
             <button class="btn btn-outline" onclick="closeBatchModal()">Cancel</button>
             <button class="btn btn-primary" id="batchCreateBtn" onclick="createBatch()">Create batch</button>
+        </div>
+    </div>
+</div>
+
+<!-- Entry without a receipt (#800) — a card charge with nothing to photograph -->
+<div id="noReceiptModal" class="modal-overlay">
+    <div class="modal-content nr-form" style="max-width:620px; max-height:90vh; overflow:auto;">
+        <h3>Add a card charge without a receipt</h3>
+        <p style="font-size:13px;color:var(--text-light);margin-top:0;">It goes into the queue like any other claim, marked “No receipt” with the reason, and reaches Bernie in a batch.</p>
+        <div class="fld"><label for="nrReason">Why there’s no receipt (required)</label>
+            <select id="nrReason" onchange="nrReasonChanged()"><option value="">— choose —</option>
+                <option value="lost_receipt">Lost receipt</option><option value="card_annual_fee">Card annual fee</option>
+                <option value="interest_charge">Interest charge</option><option value="other">Other</option></select></div>
+        <div class="fld" id="nrDetailWrap" style="display:none;"><label for="nrDetail">What is it? (required for Other)</label><input id="nrDetail" maxlength="200"></div>
+        <div class="row2">
+            <div class="fld"><label for="nrDate">Date of the charge</label><input type="date" id="nrDate"></div>
+            <div class="fld"><label for="nrAmount">Amount charged ($)</label><input type="number" step="0.01" min="0" id="nrAmount" oninput="nrTaxRender()"></div>
+        </div>
+        <div class="fld"><label for="nrVendor">Vendor / description</label><input id="nrVendor" maxlength="200" placeholder="e.g. RBC Visa annual fee"></div>
+        <div class="row2">
+            <div class="fld"><label for="nrHolder">Cardholder (sets the card account)</label><select id="nrHolder"></select></div>
+            <div class="fld"><label for="nrCategory">Category / GL</label><select id="nrCategory"></select></div>
+        </div>
+        <div class="fld" id="nrProvWrap"><label for="nrProvince">Province (where the charge was made)</label><select id="nrProvince" onchange="nrTaxRender()"></select></div>
+        <div class="nr-tax" id="nrTax"></div>
+        <div class="fld"><label for="nrNote">Note (optional)</label><textarea id="nrNote" rows="2"></textarea></div>
+        <div class="fld"><label for="nrFile">Supporting document (optional) — statement page, signed missing-receipt declaration</label>
+            <input type="file" id="nrFile" accept="image/*,application/pdf"></div>
+        <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="closeNoReceiptModal()">Cancel</button>
+            <button class="btn btn-primary" id="nrSaveBtn" onclick="createNoReceiptEntry()">Add entry</button>
         </div>
     </div>
 </div>
@@ -3448,6 +3491,41 @@
     const isVoided = f => String((f||{}).Status||'').toLowerCase() === VOID_STATUS;
     const isVoidRow = r => isVoided(r && r.f);
 
+    // ---- Entries without a receipt (task #800) ----------------------------
+    // A card charge with no receipt behind it: a lost receipt, the card's
+    // annual fee, an interest charge. Before #800 these went straight into
+    // Sage outside any batch; now they are ordinary Receipt Claims items,
+    // marked by EntryType + NoReceiptReason, and go through the same batch and
+    // approval as everything else. An empty EntryType means a receipted claim
+    // (every item created before #800).
+    const NO_RECEIPT = 'no_receipt';
+    const NO_RECEIPT_REASONS = { lost_receipt:'Lost receipt', card_annual_fee:'Card annual fee',
+                                 interest_charge:'Interest charge', other:'Other' };
+    // Fees and interest are GST-exempt financial services: no GST, no PST, the
+    // whole charge to the expense account.
+    const TAX_EXEMPT_REASONS = new Set(['card_annual_fee','interest_charge']);
+    const isNoReceipt = f => String((f||{}).EntryType||'').toLowerCase() === NO_RECEIPT;
+    function noReceiptLabel(f){
+        f=f||{}; const r=NO_RECEIPT_REASONS[f.NoReceiptReason]||'No receipt';
+        return (f.NoReceiptReason==='other' && f.NoReceiptDetail) ? `Other — ${f.NoReceiptDetail}` : r;
+    }
+    function noReceiptBadge(f){
+        return isNoReceipt(f) ? ` <span class="nr-badge">No receipt · ${reconEsc(noReceiptLabel(f))}</span>` : '';
+    }
+    // THE rule for claiming GST, in one place: the GST on a no-receipt entry
+    // is claimable only when someone deliberately overrode the default and
+    // said why (GSTOverrideReason). Without a receipt there is nothing to
+    // support the PSB rebate. The journal entry (2082), the rebate card, the
+    // batch's rebate line and the RC4034 export all read GST through this,
+    // never straight off GSTAmount — so a GST figure that reaches a no-receipt
+    // entry any other way (a SharePoint edit, the row editor) is expensed,
+    // not claimed.
+    function claimableGst(f){
+        const g=Math.round((parseFloat((f||{}).GSTAmount)||0)*100)/100;
+        if(isNoReceipt(f) && !String((f||{}).GSTOverrideReason||'').trim()) return 0;
+        return g;
+    }
+
     // Who may void. There is no per-action accountant gate anywhere else in
     // this console — the boundary is the VIEW (routeReceiptViews), and it fails
     // OPEN when /me/memberOf can't be read, because the SPA app only holds
@@ -3552,6 +3630,12 @@
     }
     // Provincial rate by province for inline recompute; GST is always 5% (spec §5.4).
     const PROVINCE_PROV_RATE = { SK:0.06, MB:0.07, BC:0.07, AB:0.00, ON:0.08, NB:0.10, NS:0.10, NL:0.10, PE:0.10, QC:0.09975 };
+
+    // Where a claim came from. A no-receipt entry is 'console' even if its
+    // IngestSource write was dropped by the self-heal, so it never reads as a
+    // phone capture.
+    function sourceOf(f){ return isNoReceipt(f) ? 'console' : (f.IngestSource||'mobile'); }
+    function sourceLabel(f){ const s=sourceOf(f); return s==='email'?'&#9993; Email':s==='console'?'&#9998; Console':'&#128241; Phone'; }
 
     function reconEsc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -3690,7 +3774,7 @@
             // unreviewed emailed claim indistinguishable from a fine one.
             else if(reconStatus==='email'){ if((f.IngestSource||'')!=='email') return false; }
             else if(reconStatus!=='all'){ if(st!==reconStatus) return false; }
-            if(src && (f.IngestSource||'mobile')!==src) return false;
+            if(src && sourceOf(f)!==src) return false;
             if(sub && f.SubmittedBy!==sub) return false;
             if(cat && f.CategoryLabel!==cat) return false;
             const d=(f.ReceiptDate||'').slice(0,10);
@@ -3723,7 +3807,7 @@
         document.getElementById('reconCount').textContent = `${rows.length} receipt${rows.length===1?'':'s'}`;
         // The rebate card is a claim against CRA — it counts live receipts only,
         // so on the Voided tab it reads $0.00 rather than the voided GST.
-        const totGst = rows.filter(r=>!isVoidRow(r)).reduce((a,r)=>a+(parseFloat(r.f.GSTAmount)||0),0);
+        const totGst = rows.filter(r=>!isVoidRow(r)).reduce((a,r)=>a+claimableGst(r.f),0);   // #800: claimable only
         const gEl=document.getElementById('rebateGst'), aEl=document.getElementById('rebateAmt');
         if(gEl) gEl.textContent='$'+totGst.toFixed(2);
         if(aEl) aEl.textContent='$'+(totGst*0.5).toFixed(2);
@@ -3740,7 +3824,7 @@
                 : '';
             return `<tr class="main-row${voided?' is-void':''}" id="row-${r.id}" onclick="toggleReconRow('${r.id}', event)">
                 <td class="chk" onclick="event.stopPropagation()"><input type="checkbox"${checked} onchange="toggleReconSelect('${r.id}')"></td>
-                <td><span class="status-badge status-${st}">${reconEsc(f.Status||'submitted')}</span></td>
+                <td><span class="status-badge status-${st}">${reconEsc(f.Status||'submitted')}</span>${noReceiptBadge(f)}</td>
                 <td>${reconEsc(f.ReceiptRef)}</td>
                 <td>${reconEsc((f.ReceiptDate||'').slice(0,10))}</td>
                 <td>${reconEsc(f.Vendor)}</td>
@@ -3752,7 +3836,7 @@
                 <td class="num">${money(f.ProvincialTax)}</td>
                 <td class="num">${money(f.TipAmount)}</td>
                 <td class="num">${money(f.TotalAmount)}</td>
-                <td>${(f.IngestSource||'mobile')==='email'?'&#9993; Email':'&#128241; Phone'}</td>
+                <td>${sourceLabel(f)}</td>
                 <td class="flag-cell">${reconEsc(f.Flag)}</td>${voidCells}
             </tr>`;
         }).join('');
@@ -3782,7 +3866,12 @@
         const total=parseFloat(f.TotalAmount)||0, tip=parseFloat(f.TipAmount)||0;
         const taxable=Math.max(0, total-tip);
         let subtotal, gst, prov;
-        if(!province){ subtotal=taxable; gst=0; prov=0; }
+        // #800: an entry without a receipt keeps its amounts when the province
+        // changes. Re-deriving GST from the province would quietly put GST on
+        // a lost receipt or a card fee — the one thing claimableGst() exists to
+        // stop. The province is recorded; the tax split is left alone.
+        if(isNoReceipt(f)){ subtotal=parseFloat(f.Subtotal)||0; gst=parseFloat(f.GSTAmount)||0; prov=parseFloat(f.ProvincialTax)||0; }
+        else if(!province){ subtotal=taxable; gst=0; prov=0; }
         else {
             const combined=0.05+(PROVINCE_PROV_RATE[province]||0);
             subtotal=Math.round((taxable/(1+combined))*100)/100;
@@ -3983,6 +4072,9 @@
         return `<div class="recon-detail-grid">
             <div class="recon-detail-img" id="img-${id}"><div class="recon-noimg">Loading image…</div></div>
             <div class="recon-form">
+                ${isNoReceipt(f)?`<div class="nr-banner"><b>Entered without a receipt</b> — ${reconEsc(noReceiptLabel(f))}${f.EnteredBy?`, by ${reconEsc(f.EnteredBy)}`:''}.<br>
+                    ${claimableGst(f)>0?`GST claimed by override: ${reconEsc(f.GSTOverrideReason)}`:'No GST is claimed on it. Entering GST here counts as an override and asks for a reason.'}
+                    Changing the province won’t recompute the tax.</div>`:''}
                 <div class="fld full"><label>Vendor</label><input id="ed-Vendor-${id}" value="${v('Vendor')}"></div>
                 <div class="fld"><label>Date</label><input type="date" id="ed-ReceiptDate-${id}" value="${(f.ReceiptDate||'').slice(0,10)}"></div>
                 <div class="fld"><label>Province</label><select id="ed-Province-${id}" onchange="reconRecalcForm('${id}')">${provOpts}</select></div>
@@ -4006,6 +4098,8 @@
 
     // Recompute the GST/provincial split in the open editor from total - tip.
     function reconRecalcForm(id){
+        // #800: same rule as changeReconProvince — no derived GST on a no-receipt entry.
+        const rec=reconAll.find(r=>r.id===id); if(rec && isNoReceipt(rec.f)) return;
         const prov=document.getElementById('ed-Province-'+id).value;
         const total=parseFloat(document.getElementById('ed-TotalAmount-'+id).value)||0;
         const tip=parseFloat(document.getElementById('ed-TipAmount-'+id).value)||0;
@@ -4021,11 +4115,14 @@
     // Fetch a single shared image (the stored URLs are sharing links, not direct
     // src) and return an object-URL blob. Throws on failure so the caller can
     // fall back to an "open in SharePoint" link for that one image.
+    // Returns {url, type}: a supporting document may be a PDF (statement page,
+    // signed declaration), which an <img> can't show.
     async function fetchSharedImage(url){
         const shareId='u!'+btoa(url).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
         const res=await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem/content`,{ headers:{ 'Authorization':`Bearer ${accessToken}` } });
         if(!res.ok) throw new Error('img '+res.status);
-        return URL.createObjectURL(await res.blob());
+        const blob=await res.blob();
+        return { url:URL.createObjectURL(blob), type:blob.type||'' };
     }
 
     // Render the receipt image(s) into a box. Primary is ReceiptImageURL; any
@@ -4035,29 +4132,39 @@
         const box=document.getElementById(boxId||('img-'+rec.id)); if(!box) return;
         const primary=rec.f.ReceiptImageURL;
         const extra=(rec.f.AdditionalImageURLs||'').split('\n').map(s=>s.trim()).filter(Boolean);
-        if(!primary && !extra.length){ box.innerHTML='<div class="recon-noimg">No image link on this receipt.</div>'; return; }
+        const nr=isNoReceipt(rec.f);
+        if(!primary && !extra.length){
+            box.innerHTML = nr
+                ? `<div class="recon-noimg">No receipt — entered without one (${reconEsc(noReceiptLabel(rec.f))}). No supporting document attached.</div>`
+                : '<div class="recon-noimg">No image link on this receipt.</div>';
+            return;
+        }
 
-        // [url, label] pairs — labels only shown when there's more than one image.
+        // [url, label] pairs. #800: with no primary image (an entry without a
+        // receipt) the extras are supporting documents, and are ALWAYS labelled
+        // as such — a lone statement page must never pass for a receipt.
         const items=[];
         if(primary) items.push([primary,'Receipt']);
-        extra.forEach((u,i)=>items.push([u, i===0?'Invoice / page 2':'Page '+(i+2)]));
-        const multi=items.length>1;
+        extra.forEach((u,i)=>items.push([u, primary ? (i===0?'Invoice / page 2':'Page '+(i+2))
+                                                   : ('Supporting document'+(extra.length>1?` ${i+1}`:''))]));
+        const showLabels=items.length>1 || !primary;
 
         try{
             await refreshAccessToken();
             const parts=await Promise.all(items.map(async ([url,label])=>{
+                const lab=showLabels?`<div class="gallery-label">${reconEsc(label)}</div>`:'';
                 try{
-                    const u=await fetchSharedImage(url);
-                    return `<div class="receipt-gallery-item">`+
-                        (multi?`<div class="gallery-label">${reconEsc(label)}</div>`:'')+
-                        `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" class="recon-img" alt="${reconEsc(label)}"></a></div>`;
+                    const {url:u, type}=await fetchSharedImage(url);
+                    // A PDF (statement page, signed declaration) can't go in an <img>.
+                    const body = /^image\//.test(type) || !type
+                        ? `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" class="recon-img" alt="${reconEsc(label)}"></a>`
+                        : `<div class="recon-noimg"><a href="${u}" target="_blank" rel="noopener">Open ${reconEsc(label.toLowerCase())}${/pdf/.test(type)?' (PDF)':''}</a></div>`;
+                    return `<div class="receipt-gallery-item">${lab}${body}</div>`;
                 }catch(e){ console.error(e);
-                    return `<div class="receipt-gallery-item">`+
-                        (multi?`<div class="gallery-label">${reconEsc(label)}</div>`:'')+
-                        `<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(url)}" target="_blank" rel="noopener">Open in SharePoint</a></div></div>`;
+                    return `<div class="receipt-gallery-item">${lab}<div class="recon-noimg">Couldn’t load it. <a href="${reconEsc(url)}" target="_blank" rel="noopener">Open in SharePoint</a></div></div>`;
                 }
             }));
-            box.innerHTML=multi?`<div class="receipt-gallery">${parts.join('')}</div>`:parts[0];
+            box.innerHTML=items.length>1?`<div class="receipt-gallery">${parts.join('')}</div>`:parts[0];
         }catch(e){ console.error(e); box.innerHTML=`<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(primary||extra[0])}" target="_blank" rel="noopener">Open in SharePoint</a></div>`; }
     }
 
@@ -4080,6 +4187,13 @@
             Flag:document.getElementById('ed-Flag-'+id).value.trim(),
         };
         if(cat){ fields.Category=`${cat.glCode} - ${cat.label}`; fields.CategoryLabel=cat.label; }
+        // #800: putting GST on an entry without a receipt is an override, and an
+        // override must say why — otherwise the GST is saved but never claimed.
+        if(isNoReceipt(rec.f) && fields.GSTAmount>0 && !String(rec.f.GSTOverrideReason||'').trim()){
+            const why=prompt(`${rec.f.ReceiptRef||'This entry'} has no receipt. Claiming $${fields.GSTAmount.toFixed(2)} GST on it is an override — why? (recorded)`, '');
+            if(why===null || why.trim().length<3){ showToast('An override reason is required to claim GST without a receipt — nothing was saved.'); return; }
+            fields.GSTOverrideReason=why.trim();
+        }
         try{
             await reconPatch(id, fields);
             Object.assign(rec.f, fields);
@@ -4099,6 +4213,185 @@
             showToast(`${rec.f.ReceiptRef||'Receipt'} reconciled.`);
             renderReconciliation();
         }catch(e){ console.error(e); showToast('Could not reconcile — reloading.'); loadReconciliation(); }
+    }
+
+    // ---- Entry without a receipt (task #800) --------------------------------
+    // Who may add one: the same posture as every accountant action in this
+    // console (see canVoid) — the boundary is the view, and it fails OPEN when
+    // /me/memberOf can't be read. An explicit non-accountant never gets here.
+    // Tightening fail-open is Chris's open decision; not changed here.
+    function canEnterNoReceipt(){ return receiptRoles.accountant !== false; }
+
+    function openNoReceiptModal(){
+        if(!canEnterNoReceipt()){ showToast('Adding entries is limited to the receipt accountant.'); return; }
+        if(!CARD_HOLDERS.length){
+            showToast('The cardholder list (Receipt Sender Map) couldn’t be read, so the card account can’t be set — refresh and try again.');
+            return;
+        }
+        document.getElementById('nrHolder').innerHTML='<option value="">— choose —</option>'+
+            CARD_HOLDERS.map(h=>`<option value="${reconEsc(h.name)}">${reconEsc(h.name)} (${reconEsc(h.gl)})</option>`).join('');
+        document.getElementById('nrCategory').innerHTML=reconCatOptionsHTML('');
+        document.getElementById('nrProvince').innerHTML=['',...RECEIPT_PROVINCES].map(p=>`<option value="${p}">${p||'— not relevant —'}</option>`).join('');
+        ['nrReason','nrDetail','nrDate','nrAmount','nrVendor','nrNote'].forEach(id=>document.getElementById(id).value='');
+        document.getElementById('nrFile').value='';
+        nrReasonChanged();
+        document.getElementById('noReceiptModal').classList.add('active');
+    }
+    function closeNoReceiptModal(){ document.getElementById('noReceiptModal').classList.remove('active'); }
+
+    function nrReasonChanged(){
+        const r=document.getElementById('nrReason').value;
+        document.getElementById('nrDetailWrap').style.display = r==='other' ? '' : 'none';
+        // Province only matters where tax could apply; a fee or interest has none.
+        document.getElementById('nrProvWrap').style.display = TAX_EXEMPT_REASONS.has(r) ? 'none' : '';
+        nrTaxRender();
+    }
+
+    // The tax section follows the reason (spec §8.3):
+    //  fee / interest -> exempt: GST 0, PST 0, all of it to the expense account.
+    //  lost receipt   -> no GST claimed by default; an override needs a reason.
+    //  other          -> Emmanuel sets GST/PST; any GST needs an override reason.
+    function nrTaxRender(){
+        const r=document.getElementById('nrReason').value, box=document.getElementById('nrTax');
+        const keep=id=>{ const el=document.getElementById(id); return el?el.value:''; };
+        const prev={gst:keep('nrGst'), pst:keep('nrPst'), why:keep('nrOverrideWhy'), on:(document.getElementById('nrOverride')||{}).checked};
+        if(!r){ box.innerHTML='Choose why there’s no receipt — the tax treatment follows from it.'; return; }
+        if(TAX_EXEMPT_REASONS.has(r)){
+            box.innerHTML=`<b>GST-exempt financial service.</b> No GST or provincial tax — the whole amount goes to the expense account, nothing to 2082, and it stays off the RC4034 rebate.`+
+                `<br><span style="color:var(--text-light);">Pick the bank-charges / interest account under Category. If it isn’t listed, add it to the <b>Receipt Category Quick Picks</b> list (IsActive = No keeps it search-only) and reopen this form.</span>`;
+            return;
+        }
+        const taxInputs=`<div class="row2" style="margin-top:8px;"><div class="fld"><label for="nrGst">GST ($)</label><input type="number" step="0.01" min="0" id="nrGst" value="${reconEsc(prev.gst)}" oninput="nrTaxRender()"></div>`+
+            `<div class="fld"><label for="nrPst">Provincial tax ($)</label><input type="number" step="0.01" min="0" id="nrPst" value="${reconEsc(prev.pst)}"></div></div>`;
+        const why=`<div class="fld"><label for="nrOverrideWhy">Why GST is being claimed without a receipt (required, recorded)</label><input id="nrOverrideWhy" value="${reconEsc(prev.why)}"></div>`;
+        if(r==='lost_receipt'){
+            box.innerHTML=`<b>No GST claimed.</b> Without the receipt there’s nothing to support the PSB rebate, so the whole amount is expensed.`+
+                `<label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:600;cursor:pointer;"><input type="checkbox" id="nrOverride" style="width:auto;" ${prev.on?'checked':''} onchange="nrOverrideToggled()"> Claim GST anyway (override)</label>`+
+                (prev.on?taxInputs+why:'');
+            return;
+        }
+        // other
+        const g=parseFloat(prev.gst)||0;
+        box.innerHTML=`Set the tax split. Any GST on an entry without a receipt is an override and needs a reason; without one it is expensed, not claimed.`+taxInputs+(g>0?why:'');
+    }
+    // Ticking the override pre-fills the split from the province, the same
+    // arithmetic as the row editor; Emmanuel can then correct it.
+    function nrOverrideToggled(){
+        nrTaxRender();
+        if(!document.getElementById('nrOverride').checked) return;
+        const amt=parseFloat(document.getElementById('nrAmount').value)||0, prov=document.getElementById('nrProvince').value;
+        if(amt>0 && prov){ const combined=0.05+(PROVINCE_PROV_RATE[prov]||0), sub=Math.round(amt/(1+combined)*100)/100, gst=Math.round(sub*0.05*100)/100;
+            document.getElementById('nrGst').value=gst; document.getElementById('nrPst').value=Math.round((amt-sub-gst)*100)/100; }
+    }
+
+    // Everything the entry will say, validated, before anything is written.
+    // Returns {error} or {fields, file}.
+    function nrCollect(){
+        const val=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
+        const reason=val('nrReason'), detail=val('nrDetail'), date=val('nrDate'), vendor=val('nrVendor'), holder=val('nrHolder'), gl=val('nrCategory');
+        const amt=Math.round((parseFloat(val('nrAmount'))||0)*100)/100;
+        if(!NO_RECEIPT_REASONS[reason]) return {error:'Choose why there’s no receipt.'};
+        if(reason==='other' && detail.length<3) return {error:'Say what the charge is (required for Other).'};
+        if(!date) return {error:'Enter the date of the charge.'};
+        if(!(amt>0)) return {error:'Enter the amount charged.'};
+        if(!vendor) return {error:'Enter a vendor or description.'};
+        const h=CARD_HOLDERS.find(x=>x.name===holder); if(!h) return {error:'Choose the cardholder.'};
+        const cat=allReconCats().find(c=>c.glCode===gl); if(!cat) return {error:'Choose a category.'};
+        let gst=0, pst=0, overrideWhy='', prov='';
+        if(!TAX_EXEMPT_REASONS.has(reason)){
+            prov=val('nrProvince');
+            const overriding = reason==='other' || (document.getElementById('nrOverride')||{}).checked;
+            if(overriding){
+                gst=Math.round((parseFloat(val('nrGst'))||0)*100)/100; pst=Math.round((parseFloat(val('nrPst'))||0)*100)/100;
+                if(gst<0||pst<0) return {error:'Tax can’t be negative.'};
+                if(gst>0){ overrideWhy=val('nrOverrideWhy'); if(overrideWhy.length<3) return {error:'Say why GST is being claimed without a receipt — it’s recorded.'}; }
+            }
+        }
+        const sub=Math.round((amt-gst-pst)*100)/100;
+        if(sub<0) return {error:'GST plus provincial tax is more than the amount charged.'};
+        const me=actorIdentity();
+        const fields={
+            Vendor:vendor,
+            // Date-only value: noon Central, so it can't roll back a day.
+            ReceiptDate:`${date}T12:00:00-06:00`,
+            Province:prov, Subtotal:sub, GSTAmount:gst, ProvincialTax:pst, TotalAmount:amt,
+            Category:`${cat.glCode} - ${cat.label}`, CategoryLabel:cat.label,
+            Description:val('nrNote'),
+            // SubmittedBy is the CARDHOLDER: it is what cardAccountFor() reads
+            // to pick the credit account (2071/2072/2073/2076). The person who
+            // typed the entry is EnteredBy.
+            SubmittedBy:h.name, SubmittedAt:new Date().toISOString(),
+            ReceiptImageURL:'', Status:'submitted',
+            EntryType:NO_RECEIPT, NoReceiptReason:reason,
+            EnteredBy:me.name||me.upn, EnteredByUPN:me.upn, IngestSource:'console',
+        };
+        if(reason==='other') fields.NoReceiptDetail=detail;
+        if(overrideWhy) fields.GSTOverrideReason=overrideWhy;
+        const file=(document.getElementById('nrFile').files||[])[0]||null;
+        return {fields, file, date, holder:h.name};
+    }
+
+    // Columns a create may drop (and flag) if the list is missing them — the
+    // TipAmount / void self-heal posture. EntryType, NoReceiptReason,
+    // NoReceiptDetail and GSTOverrideReason are NOT droppable: without them the
+    // item would be an unmarked receipt-less claim, or GST claimed with no
+    // reason, so that failure stops the create instead.
+    const NR_DROPPABLE=['EnteredBy','EnteredByUPN','IngestSource','AdditionalImageURLs'];
+
+    async function createNoReceiptEntry(){
+        if(!canEnterNoReceipt()){ showToast('Adding entries is limited to the receipt accountant.'); return; }
+        const c=nrCollect();
+        if(c.error){ showToast(c.error); return; }
+        const btn=document.getElementById('nrSaveBtn'); btn.disabled=true; btn.textContent='Adding…';
+        try{
+            await refreshAccessToken();
+            const site=await graphSite();
+            const listId=await graphListId(site.id, CONFIG.receiptClaimsList);
+            const safeHolder=c.holder.replace(/[^a-zA-Z0-9 _-]/g,'');
+            let docUrl='', docFailed=false, createdRef=null, dropped=[];
+            // Same ref generator and single race retry as submitReceipt().
+            for(let attempt=0; attempt<2; attempt++){
+                const ref=await nextReceiptRef(site.id, listId);
+                if(c.file && !docUrl && !docFailed){
+                    // Uploaded once, under the first ref tried, like the capture flow.
+                    const ext=(c.file.name.match(/\.([A-Za-z0-9]{1,5})$/)||[])[1]||(/pdf/.test(c.file.type)?'pdf':'jpg');
+                    const path=`Travel Receipts/${c.date}/${safeHolder}/${ref}-support.${ext.toLowerCase()}`;
+                    try{
+                        const up=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drive/root:/${path}:/content`,
+                            { method:'PUT', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':c.file.type||'application/octet-stream'}, body:c.file });
+                        if(!up.ok) throw new Error('upload '+up.status);
+                        const item=await up.json();
+                        const lk=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drive/items/${item.id}/createLink`,
+                            { method:'POST', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':'application/json'}, body:JSON.stringify({type:'view',scope:'organization'}) });
+                        docUrl = lk.ok ? (((await lk.json()).link||{}).webUrl||item.webUrl) : item.webUrl;
+                    }catch(e){ console.error(e); docFailed=true; }
+                }
+                const fields=Object.assign({ Title:`${c.holder} - ${c.date} - no receipt`, ReceiptRef:ref }, c.fields);
+                // The supporting document is NOT a receipt, so it never goes in
+                // ReceiptImageURL — that stays empty and says "no receipt".
+                if(docUrl) fields.AdditionalImageURLs=docUrl;
+                if(docFailed){ const n='Supporting document failed to upload — attach it again.'; fields.Flag=fields.Flag?`${fields.Flag}; ${n}`:n; }
+                const post=f=>fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items`,
+                    { method:'POST', headers:{'Authorization':`Bearer ${accessToken}`,'Content-Type':'application/json'}, body:JSON.stringify({fields:f}) });
+                let res=await post(fields);
+                // Self-heal for the droppable columns only, one at a time.
+                for(let i=0; !res.ok && i<NR_DROPPABLE.length; i++){
+                    const txt=await res.clone().text().catch(()=> '');
+                    const hit=NR_DROPPABLE.find(k=>fields[k]!==undefined && new RegExp(k,'i').test(txt));
+                    if(!hit) break;
+                    delete fields[hit]; dropped.push(hit);
+                    const n=`${hit} not saved — add that column to the Receipt Claims list.`;
+                    fields.Flag=fields.Flag?`${fields.Flag}; ${n}`:n;
+                    res=await post(fields);
+                }
+                if(res.ok){ createdRef=ref; const it=await res.json(); reconAll.push({id:it.id, f:Object.assign({}, fields, it.fields||{})}); break; }
+                if(attempt===1){ const err=await res.json().catch(()=>({})); throw new Error((err.error&&err.error.message)||('create '+res.status)); }
+            }
+            closeNoReceiptModal();
+            populateReconFilters(); renderReconciliation();
+            showToast(`Added ${createdRef} (no receipt).`+(docFailed?' The supporting document didn’t upload — it’s flagged.':'')+(dropped.length?` Not saved: ${dropped.join(', ')}.`:''));
+        }catch(e){ console.error(e); showToast('Couldn’t add the entry — '+e.message); }
+        finally{ btn.disabled=false; btn.textContent='Add entry'; }
     }
 
     // ---- Void / restore (task #772) ----------------------------------------
@@ -4242,11 +4535,13 @@
         // This CSV backs a rebate claim to CRA, so the exclusion is restated here
         // rather than relied on from filteredRecon() — on the Voided tab that
         // would otherwise export exactly the receipts that must not be claimed.
-        const recs=filteredRecon().filter(r=>!isVoidRow(r));
+        // #800: an entry without a receipt is on this CSV only if its GST was
+        // deliberately overridden with a reason — see claimableGst().
+        const recs=filteredRecon().filter(r=>!isVoidRow(r) && !(isNoReceipt(r.f) && claimableGst(r.f)===0));
         if(!recs.length){ showToast('Nothing to export in the current view.'); return; }
         let totGst=0, totReb=0;
         const body=recs.map(r=>{
-            const gst=r2(parseFloat(r.f.GSTAmount)||0);
+            const gst=claimableGst(r.f);
             const reb=r2(gst*0.5);                       // 50% PSB rebate (the claimable half)
             totGst=r2(totGst+gst); totReb=r2(totReb+reb);
             return [(r.f.ReceiptDate||'').slice(0,10), (r.f.Vendor||'').replace(/"/g,"'"),
@@ -4373,6 +4668,11 @@
     // "not on the list" and "we could not read the list", and it decides
     // whether the legacy roster is allowed to answer at all. See cardAccountFor().
     let CARD_GL_LOADED = false;
+    // #800: the people who can be picked as cardholder on an entry without a
+    // receipt — exactly those with a CardGL on the Sender Map, one per
+    // cardholder. Empty when the list couldn't be read: the entry form then
+    // refuses rather than falling back to the surname roster.
+    let CARD_HOLDERS = [];
 
     const holderKey = (name) => String(name||'').toLowerCase().replace(/\s+/g,' ').trim();
 
@@ -4384,15 +4684,19 @@
                 `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/items?$expand=fields&$top=200`,
                 { headers:{ 'Authorization':`Bearer ${accessToken}` } });
             const d = await res.json();
-            const map = {};
+            const map = {}, holders = {};
             (d.value||[]).forEach(it => {
                 const f = it.fields || {};
                 // A blank CardGL is a real, expected state — someone is on the
                 // list before Emmanuel has given us their account. Skip it here
                 // so it falls through to the warning rather than mapping to ''.
-                if (f.Cardholder && f.CardGL) map[holderKey(f.Cardholder)] = String(f.CardGL).trim();
+                if (f.Cardholder && f.CardGL) {
+                    map[holderKey(f.Cardholder)] = String(f.CardGL).trim();
+                    holders[holderKey(f.Cardholder)] = String(f.Cardholder).replace(/\s+/g,' ').trim();
+                }
             });
             CARD_GL_BY_HOLDER = map;
+            CARD_HOLDERS = Object.keys(holders).map(k=>({ name:holders[k], gl:map[k] })).sort((a,b)=>a.name.localeCompare(b.name));
             CARD_GL_LOADED = true;
         } catch (err) {
             CARD_GL_LOADED = false;
@@ -4442,7 +4746,10 @@
         recs.filter(r=>!isVoidRow(r)).forEach(r=>{
             const f=r.f;
             const gst=r2(parseFloat(f.GSTAmount)||0);
-            const recover=r2(gst*0.5);
+            // #800: 2082 only ever gets the claimable half. GST sitting on a
+            // no-receipt entry without an override goes to the expense line.
+            const recover=r2(claimableGst(f)*0.5);
+            if(gst>0 && claimableGst(f)===0) warnings.push(`${f.ReceiptRef||'?'}: GST $${gst.toFixed(2)} on an entry without a receipt has no override reason — expensed in full, nothing to 2082`);
             const sub=parseFloat(f.Subtotal)||0, prov=parseFloat(f.ProvincialTax)||0, tip=parseFloat(f.TipAmount)||0;
             const total=r2(parseFloat(f.TotalAmount)||0);
             const expAmt=r2(sub+prov+tip+(gst-recover));
@@ -4546,9 +4853,10 @@
     // The statement the approver affirms. The FILLED-IN text is stored with the
     // approval, so rewording this later never changes what an earlier approver
     // agreed to.
-    function approvalStatement(ref, n, total, gst, name){
+    function approvalStatement(ref, n, total, gst, name, noReceipt){
         return `I, ${name}, have reviewed the ${n} receipt${n===1?'':'s'} in ${ref} totalling $${total.toFixed(2)} `+
-               `(GST $${gst.toFixed(2)}) and approve them for posting to the General Journal.`;
+               `(GST $${gst.toFixed(2)})`+(noReceipt?`, including ${noReceipt} entered without a receipt,`:'')+
+               ` and approve them for posting to the General Journal.`;
     }
 
     // Who is acting, from the signed-in Microsoft account MSAL holds — never a
@@ -4580,7 +4888,11 @@
             vendor:String(f.Vendor||'').trim(), prov:String(f.Province||'').trim().toUpperCase(), gl:glOf(f),
             cat:String(f.CategoryLabel||'').trim(), by:String(f.SubmittedBy||'').replace(/\s+/g,' ').trim(),
             sub:cents(f.Subtotal)/100, gst:cents(f.GSTAmount)/100, pst:cents(f.ProvincialTax)/100,
-            tip:cents(f.TipAmount)/100, total:cents(f.TotalAmount)/100, flag:String(f.Flag||'').trim() }; }
+            tip:cents(f.TipAmount)/100, total:cents(f.TotalAmount)/100, flag:String(f.Flag||'').trim(),
+            // #800: what kind of entry it is, why there is no receipt, and
+            // whether its GST was deliberately claimed. Old snapshots lack these
+            // and read as a receipted claim.
+            et:isNoReceipt(f)?NO_RECEIPT:'receipt', nr:String(f.NoReceiptReason||''), ov:String(f.GSTOverrideReason||'').trim()?1:0 }; }
     function batchSnapshot(claims){ return claims.map(claimSnap).sort((a,b)=>a.ref.localeCompare(b.ref)||a.id.localeCompare(b.id)); }
     // Summed in whole cents so 17 receipts can't drift a float off by $0.01.
     function snapTotals(snap){
@@ -4597,27 +4909,41 @@
     // fixing a vendor typo is not a financial change. The canonical form is
     // written out in the spec (§9.5) so an auditor can recompute it without
     // this code. Stored as "v1:<64 hex>".
-    const FP_VERSION='v1';
-    function fingerprintText(snap){
+    //
+    // v2 (#800) appends |entryType|noReceiptReason|gstOverridden to each line:
+    // an entry without a receipt quietly becoming a receipted one after
+    // approval, its reason changing, or its GST becoming claimable, all show.
+    // New records are v2. v1 records (every approval and the backfill before
+    // #800) are still recomputed in v1, so they keep verifying.
+    const FP_VERSION='v2', FP_VERSIONS=['v1','v2'];
+    function fingerprintText(snap, ver){
+        ver=ver||FP_VERSION;
         const m=x=>(+x).toFixed(2);
-        const lines=snap.map(s=>[s.ref,s.date,m(s.total),m(s.sub),m(s.gst),m(s.pst),m(s.tip),s.gl,s.prov,s.by].join('|')).sort();
-        return 'CMD-RECEIPT-BATCH-'+FP_VERSION+'\n'+lines.join('\n');
+        const lines=snap.map(s=>{ const base=[s.ref,s.date,m(s.total),m(s.sub),m(s.gst),m(s.pst),m(s.tip),s.gl,s.prov,s.by];
+            if(ver==='v2') base.push(s.et||'receipt', s.nr||'', s.ov?1:0);
+            return base.join('|'); }).sort();
+        return 'CMD-RECEIPT-BATCH-'+ver+'\n'+lines.join('\n');
     }
-    async function fingerprintSnap(snap){
-        const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprintText(snap)));
-        return FP_VERSION+':'+[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    async function fingerprintSnap(snap, ver){
+        ver=ver||FP_VERSION;
+        const buf=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprintText(snap, ver)));
+        return ver+':'+[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
     }
+    const fpVersionOf = fp => String(fp||'').split(':')[0];
 
     // What moved between two snapshots, per receipt, in plain words.
     function snapDiff(before, after){
         const A=new Map(before.map(s=>[String(s.id),s])), B=new Map(after.map(s=>[String(s.id),s])), out=[];
         const money=v=>'$'+(+v||0).toFixed(2);
         const F=[['total','total',1],['sub','subtotal',1],['gst','GST',1],['pst','provincial tax',1],['tip','tip',1],
-                 ['gl','GL account',0],['prov','province',0],['date','date',0],['by','submitter',0]];
+                 ['gl','GL account',0],['prov','province',0],['date','date',0],['by','submitter',0],
+                 ['et','entry type',0],['nr','no-receipt reason',0],['ov','GST override',0]];
         for(const [id,a] of A){ const b=B.get(id);
             if(!b){ out.push(`${a.ref||id} is no longer in the batch (was ${money(a.total)})`); continue; }
             F.forEach(([k,label,isMoney])=>{
-                const x=isMoney?cents(a[k]):String(a[k]||''), y=isMoney?cents(b[k]):String(b[k]||'');
+                // A v1 snapshot has no et/nr/ov: it read as a receipted claim.
+                const dflt=k==='et'?'receipt':(k==='ov'?0:'');
+                const x=isMoney?cents(a[k]):String(a[k]??dflt), y=isMoney?cents(b[k]):String(b[k]??dflt);
                 if(x!==y) out.push(`${a.ref||id}: ${label} ${isMoney?money(a[k]):(a[k]||'—')} → ${isMoney?money(b[k]):(b[k]||'—')}`);
             });
         }
@@ -4699,7 +5025,7 @@
     // anything has moved since the baseline was taken.
     async function batchIntegrity(b, claims){
         const f=b.f, ref=f.BatchRef||'', ev=lastEvent(ref,'approved');
-        const now=batchSnapshot(batchMembers(b, claims)), actual=await fingerprintSnap(now);
+        const now=batchSnapshot(batchMembers(b, claims));
         let expected=f.ApprovalFingerprint||'', basis='approval', basisSnap=parseSnap(f.ApprovalSnapshot), basisAt=f.ApprovedAt;
         // The batch and its event each hold a copy; they must agree.
         const disagree=!!(expected && ev && ev.f.Fingerprint && ev.f.Fingerprint!==expected);
@@ -4708,8 +5034,10 @@
             if((ev.f.Source||'')==='reconstructed'){ basis='baseline'; basisAt=ev.created; } else basisAt=ev.f.EventAt;
         }
         if(!basisSnap.length && ev) basisSnap=parseSnap(ev.f.Snapshot);
-        if(!expected) return {state:'none', actual, now};
-        if(expected.split(':')[0]!==FP_VERSION) return {state:'version', expected, actual, now, basis, basisAt};
+        if(!expected) return {state:'none', actual:await fingerprintSnap(now), now};
+        // Recompute in the version the record was taken in (v1 or v2).
+        if(!FP_VERSIONS.includes(fpVersionOf(expected))) return {state:'version', expected, now, basis, basisAt};
+        const actual=await fingerprintSnap(now, fpVersionOf(expected));
         const ok=expected===actual;
         return {state:ok?'match':'changed', basis, basisAt, expected, actual, disagree, now, diff:ok?[]:snapDiff(basisSnap, now)};
     }
@@ -4877,15 +5205,17 @@
         const provRows=Object.keys(byProv).sort().map(k=>line(k,byProv[k])).join('');
         const grand=`<tr class="bd-total"><td>Grand total</td><td class="num">${claims.length}</td><td class="num">$${n2(tSub)}</td><td class="num">$${n2(tGst)}</td><td class="num">$${n2(tProv)}</td><td class="num">$${n2(tTot)}</td></tr>`;
         const fc=claims.filter(r=>r.f.Flag).length;
+        const nrc=claims.filter(r=>isNoReceipt(r.f)).length;
+        const tClaim=claims.reduce((a,r)=>a+claimableGst(r.f),0);   // #800: rebate on claimable GST only
         const st=(f.Status||'').toLowerCase();
         document.getElementById('bdSummary').innerHTML=
-            `<div class="bd-meta">Period ${reconEsc(batchPeriod(f)||'—')} · Prepared by ${reconEsc(f.PreparedBy||'—')}${f.PreparedAt?` on ${reconEsc(fmtRegina(f.PreparedAt))}`:''} · ${claims.length} receipts · ${fc} flagged · Status: <b>${reconEsc(f.Status||'')}</b>${f.SageJournalRef?` · Sage entry <b>${reconEsc(f.SageJournalRef)}</b>`:''}</div>`+
+            `<div class="bd-meta">Period ${reconEsc(batchPeriod(f)||'—')} · Prepared by ${reconEsc(f.PreparedBy||'—')}${f.PreparedAt?` on ${reconEsc(fmtRegina(f.PreparedAt))}`:''} · ${claims.length} receipts · ${fc} flagged${nrc?` · <b class="nr-text">${nrc} without a receipt</b>`:''} · Status: <b>${reconEsc(f.Status||'')}</b>${f.SageJournalRef?` · Sage entry <b>${reconEsc(f.SageJournalRef)}</b>`:''}</div>`+
             // The integrity verdict goes straight under the header: someone opening a
             // batch that changed after approval should see that before the totals.
             ((st==='pending_approval'||st==='approved')?'<div id="bdIntegrity"></div>':'')+
             `<div class="bd-card"><h4>Totals by category${st==='returned'?' (as returned)':''}</h4><table class="bd-table"><thead><tr><th>Category</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${catRows}${grand}</tbody></table></div>`+
             `<div class="bd-card"><h4>Totals by province</h4><table class="bd-table"><thead><tr><th>Province</th><th class="num">#</th><th class="num">Subtotal</th><th class="num">GST</th><th class="num">Prov tax</th><th class="num">Total</th></tr></thead><tbody>${provRows}</tbody></table></div>`+
-            `<div class="bd-card bd-keep"><h4>Rebate &amp; notes</h4>GST rebate (50%): <b>$${n2(tGst*0.5)}</b><br>${f.AccountantNotes?('Notes from Emmanuel: '+reconEsc(f.AccountantNotes)):'No accountant notes.'}${f.ReturnNotes?('<br>Return notes: '+reconEsc(f.ReturnNotes)):''}</div>`;
+            `<div class="bd-card bd-keep"><h4>Rebate &amp; notes</h4>GST rebate (50%): <b>$${n2(tClaim*0.5)}</b>${tClaim<tGst-0.005?` <span class="nr-text">(GST on entries without a receipt isn’t claimed)</span>`:''}<br>${f.AccountantNotes?('Notes from Emmanuel: '+reconEsc(f.AccountantNotes)):'No accountant notes.'}${f.ReturnNotes?('<br>Return notes: '+reconEsc(f.ReturnNotes)):''}</div>`;
         renderBatchRecord(b);
         renderBatchReceipts();
         renderBatchHistory(b);
@@ -4955,7 +5285,7 @@
             if(st==='pending_approval'){
                 const ev=lastEvent(b.f.BatchRef||'','created');
                 if(!ev||!ev.f.Fingerprint){ el.innerHTML=''; return; }
-                const now=batchSnapshot(_bdClaims), fp=await fingerprintSnap(now);
+                const now=batchSnapshot(_bdClaims), fp=await fingerprintSnap(now, fpVersionOf(ev.f.Fingerprint));
                 el.innerHTML = fp===ev.f.Fingerprint
                     ? `<div class="integrity integrity-ok">Unchanged since it was submitted for approval on ${E(fmtRegina(ev.f.EventAt))}.</div>`
                     : `<div class="integrity integrity-bad"><b>Changed since it was submitted for approval</b> on ${E(fmtRegina(ev.f.EventAt))}:${list(snapDiff(parseSnap(ev.f.Snapshot), now))}</div>`;
@@ -4998,7 +5328,7 @@
         const b=batchAll.find(x=>x.id===_bdBatchId), returned=b&&(b.f.Status||'').toLowerCase()==='returned';
         let rows=_bdClaims; if(_bdFlaggedOnly) rows=rows.filter(r=>r.f.Flag);
         const money=v=>{const n=parseFloat(v);return isNaN(n)?'':'$'+n.toFixed(2);};
-        const body=rows.map(r=>{const x=r.f;return `<tr class="main-row" onclick="viewBatchReceipt('${r.id}')"><td>${reconEsc(x.ReceiptRef)}</td><td>${reconEsc((x.ReceiptDate||'').slice(0,10))}</td><td>${reconEsc(x.Vendor)}</td><td>${reconEsc(x.Province)}</td><td>${reconEsc(x.SubmittedBy)}</td><td>${reconEsc(x.CategoryLabel)}</td><td class="wrap">${reconEsc(x.Description)}</td><td class="num">${money(x.GSTAmount)}</td><td class="num">${money(x.TotalAmount)}</td><td class="appr-flag">${reconEsc(x.Flag)}</td></tr>`;}).join('');
+        const body=rows.map(r=>{const x=r.f;return `<tr class="main-row" onclick="viewBatchReceipt('${r.id}')"><td>${reconEsc(x.ReceiptRef)}${noReceiptBadge(x)}</td><td>${reconEsc((x.ReceiptDate||'').slice(0,10))}</td><td>${reconEsc(x.Vendor)}</td><td>${reconEsc(x.Province)}</td><td>${reconEsc(x.SubmittedBy)}</td><td>${reconEsc(x.CategoryLabel)}</td><td class="wrap">${reconEsc(x.Description)}</td><td class="num">${money(x.GSTAmount)}</td><td class="num">${money(x.TotalAmount)}</td><td class="appr-flag">${reconEsc(x.Flag)}</td></tr>`;}).join('');
         const title=returned?`Receipts as they were when returned (${rows.length})`:`Receipts (${rows.length})`;
         document.getElementById('bdReceipts').innerHTML=`<div class="bd-card"><h4>${title} <span class="no-print" style="font-weight:400;color:var(--text-light);font-size:12px;">— click a row to view the receipt image</span></h4><table class="bd-table"><thead><tr><th>Ref</th><th>Date</th><th>Vendor</th><th>Prov</th><th>Submitter</th><th>Category</th><th>Note</th><th class="num">GST</th><th class="num">Total</th><th>Flag</th></tr></thead><tbody>${body||'<tr><td colspan="10" class="recon-empty">None.</td></tr>'}</tbody></table></div>`;
     }
@@ -5033,6 +5363,7 @@
             `<div><label>Total</label>${money(f.TotalAmount)}</div>`+
             `<div class="rv-full"><label>Note</label>${f.Description?reconEsc(f.Description):'<span style="color:var(--text-light)">(none)</span>'}</div>`+
             (f.Flag?`<div class="rv-full"><label>Flag</label><span class="appr-flag">${reconEsc(f.Flag)}</span></div>`:'')+
+            (isNoReceipt(f)?`<div class="rv-full"><label>Entered without a receipt</label><span class="nr-text">${reconEsc(noReceiptLabel(f))}</span>${f.EnteredBy?` — by ${reconEsc(f.EnteredBy)}`:''}${claimableGst(f)>0?`<br>GST claimed by override: ${reconEsc(f.GSTOverrideReason)}`:'<br>No GST claimed.'}</div>`:'')+
             `</div>`;
         document.getElementById('rvImage').innerHTML='<div class="recon-noimg">Loading image…</div>';
         document.getElementById('receiptViewModal').classList.add('active');
@@ -5072,13 +5403,14 @@
         const a=actorIdentity();
         if(!a.upn){ showToast('Can’t read your signed-in account — sign out and back in, then approve.'); return; }
         const snap=batchSnapshot(_bdClaims), t=snapTotals(snap), ref=b.f.BatchRef||'';
-        const statement=approvalStatement(ref, t.n, t.total, t.gst, a.name||a.upn);
+        const statement=approvalStatement(ref, t.n, t.total, t.gst, a.name||a.upn, _bdClaims.filter(r=>isNoReceipt(r.f)).length);
         _ap={ batchId, statement, fp:await fingerprintSnap(snap) };
         const fc=_bdClaims.filter(r=>r.f.Flag).length;
         document.getElementById('apTitle').textContent=`Approve ${ref}`;
         document.getElementById('apBody').innerHTML=
             `<div class="appr-id">Signed in as <b>${reconEsc(a.name||a.upn)}</b> · <span class="fp">${reconEsc(a.upn)}</span><br>`+
             `<span style="font-size:13px;color:var(--text-light);">The approval is recorded against this Microsoft account, with the time and a fingerprint of these receipts.</span></div>`+
+            (_bdClaims.some(r=>isNoReceipt(r.f))?`<div class="integrity integrity-info" style="margin-top:12px;">${_bdClaims.filter(r=>isNoReceipt(r.f)).length} of these ${_bdClaims.filter(r=>isNoReceipt(r.f)).length===1?'is a card charge':'are card charges'} entered without a receipt — marked “No receipt” in the list, with the reason.</div>`:'')+
             (fc?`<div class="integrity integrity-info" style="margin-top:12px;">${fc} of these receipts ${fc===1?'is':'are'} flagged — use “View flagged only” to check ${fc===1?'it':'them'} first.</div>`:'')+
             `<label class="appr-statement"><input type="checkbox" id="apAffirm" onchange="document.getElementById('apConfirmBtn').disabled=!this.checked"><span>${reconEsc(statement)}</span></label>`;
         const btn=document.getElementById('apConfirmBtn'); btn.disabled=true; btn.textContent='Approve batch';
