@@ -337,6 +337,69 @@
 
         .login-screen .btn { max-width: 300px; }
 
+        /* ========== COMMITTEE GATE ========== */
+        .committee-step, .auth-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+        .committee-step .committee-lede {
+            max-width: 340px;
+            color: var(--text);
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        .committee-badge {
+            display: inline-block;
+            background: var(--primary);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            padding: 6px 12px;
+            border-radius: 999px;
+            margin-bottom: 12px;
+        }
+        .committee-notice {
+            background: #fff8e1;
+            border: 1px solid #f0c54a;
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin: 8px 0 20px;
+            text-align: left;
+            max-width: 340px;
+            font-size: 14px;
+            color: #5a4400;
+        }
+        .committee-notice strong { color: #5a4400; }
+        .link-btn {
+            background: none;
+            border: none;
+            color: var(--primary);
+            font: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: underline;
+            cursor: pointer;
+            margin-top: 28px;
+            padding: 8px;
+        }
+        .committee-lock {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            padding: 12px 14px;
+            border: 2px solid var(--primary);
+            border-radius: 8px;
+            background: rgba(0,120,212,0.05);
+        }
+        .committee-lock .lock-value { font-size: 16px; font-weight: 700; color: var(--text); }
+        .committee-lock .link-btn { margin-top: 0; padding: 0; font-size: 13px; }
+
         .success-screen {
             display: none;
             flex-direction: column;
@@ -1072,22 +1135,58 @@
     </div>
 </div>
 
-<!-- Login Screen -->
+<!-- Login Screen
+     Capture host (travel.): step 1 is a mandatory committee choice; step 2 is a
+     sign-in step tailored to that choice. The choice locks ClaimCategory on the
+     form, so a DEXCOM member can no longer drift into the OC/DLC path (or vice
+     versa) by skipping the instructions. Console host (expenses.) skips step 1
+     and shows the staff sign-in only — see applyConsoleChrome().
+-->
 <div id="loginScreen" class="login-screen">
-    <h2 id="loginHeading">Submit a Claim</h2>
 
-    <div id="extNotice" style="background:#fff8e1; border:1px solid #f0c54a; border-radius:8px; padding:14px 16px; margin:8px 0 20px; text-align:left; max-width:340px;">
-        <strong style="display:block; margin-bottom:6px; color:#7a5a00;">Ordaining Council &amp; DLC members:</strong>
-        <span style="font-size:14px; color:#5a4400;">You do <strong>not</strong> have a CMD Microsoft account. Use the orange button below — do not click "Sign in with Microsoft".</span>
+    <!-- Step 1: which committee? -->
+    <div id="committeeStep" class="committee-step">
+        <h2>Which committee is this claim for?</h2>
+        <p class="committee-lede">Choose carefully. Your choice decides who approves and pays your claim, and you can&rsquo;t change it on the form.</p>
+        <div class="vehicle-choice-buttons" role="group" aria-label="Committee">
+            <button class="btn-vehicle-choice" onclick="chooseCommittee('DEXCOM')">
+                <div class="choice-title">DEXCOM</div>
+                <div class="choice-desc">District Executive Committee</div>
+            </button>
+            <button class="btn-vehicle-choice" onclick="chooseCommittee('Licensing Committee')">
+                <div class="choice-title">Licensing Committee</div>
+                <div class="choice-desc">District Licensing Committee (DLC)</div>
+            </button>
+            <button class="btn-vehicle-choice" onclick="chooseCommittee('Ordaining Council')">
+                <div class="choice-title">Ordaining Council</div>
+                <div class="choice-desc">Ordaining Council members</div>
+            </button>
+            <button class="btn-vehicle-choice" onclick="chooseCommittee('staff')">
+                <div class="choice-title">CMD Staff</div>
+                <div class="choice-desc">Employee mileage, district vehicles and receipts</div>
+            </button>
+        </div>
     </div>
 
-    <button id="extSubmitBtn" class="btn btn-primary" onclick="startExternalSubmission()"
-            style="background:#e67e22; border-color:#e67e22;">
-        File a claim without signing in →
-    </button>
+    <!-- Step 2: sign-in, tailored to the committee -->
+    <div id="authStep" class="auth-step" style="display:none;">
+        <div id="committeeBadge" class="committee-badge" style="display:none;"></div>
+        <h2 id="loginHeading">Submit a Claim</h2>
 
-    <p style="margin-top:28px; font-size:13px; color:var(--text-light);">CMD staff with a Microsoft 365 account:</p>
-    <button class="btn btn-outline" onclick="signIn()" style="max-width:300px;">Sign in with Microsoft</button>
+        <div id="extNotice" class="committee-notice" style="display:none;"></div>
+
+        <button id="extSubmitBtn" class="btn btn-primary" onclick="startExternalSubmission()"
+                style="display:none; background:#e67e22; border-color:#e67e22;">
+            Continue to the claim form &rarr;
+        </button>
+
+        <p id="signInLead" style="margin-top:28px; font-size:13px; color:var(--text-light);">CMD staff with a Microsoft 365 account:</p>
+        <button id="signInBtn" class="btn btn-outline" onclick="signIn()" style="max-width:300px;">Sign in with Microsoft</button>
+
+        <button id="changeCommitteeBtn" class="link-btn" onclick="backToCommitteeStep()" style="display:none;">
+            &larr; Choose a different committee
+        </button>
+    </div>
 </div>
 
 <!-- Vehicle Selection Screen -->
@@ -1156,6 +1255,10 @@
               so the submit handler can keep reading one canonical value.
               The select is hidden and cleared in startExternalSubmission().
             -->
+            <div id="committeeLock" class="committee-lock" style="display:none;">
+                <span class="lock-value" id="committeeLockValue"></span>
+                <button type="button" class="link-btn" onclick="changeCommittee()">Wrong committee? Start over</button>
+            </div>
             <select id="claimCategory">
                 <option value="Employee Mileage">Employee Mileage</option>
                 <option value="DEXCOM">DEXCOM</option>
@@ -1745,6 +1848,110 @@
     // staff categories (Employee Mileage, DEXCOM) route to a different
     // approval chain and broke at least one approval when a council member
     // picked Employee Mileage by mistake from the old dropdown.
+    // ========== COMMITTEE GATE ==========
+    // The first screen on the capture host forces a committee choice before
+    // anything else. The choice (a) decides the sign-in path and (b) locks
+    // ClaimCategory on the form, because the approval flow routes on that
+    // value at item CREATE only (DEXCOM → treasurer; LC/OC → Chris) and a
+    // mis-coded claim has to be replaced, not edited. 'staff' keeps the
+    // original signed-in hub and the full category dropdown.
+    const COMMITTEE_COPY = {
+        'DEXCOM': {
+            heading: 'DEXCOM claim',
+            notice: '<strong>DEXCOM members sign in with your @canadianmidwest.ca Microsoft account.</strong> ' +
+                    'DEXCOM claims cannot be filed without signing in.',
+            external: false,
+        },
+        'Licensing Committee': {
+            heading: 'Licensing Committee claim',
+            notice: '<strong>No CMD Microsoft account needed.</strong> Tap the orange button to fill in your claim.',
+            external: true,
+        },
+        'Ordaining Council': {
+            heading: 'Ordaining Council claim',
+            notice: '<strong>No CMD Microsoft account needed.</strong> Tap the orange button to fill in your claim.',
+            external: true,
+        },
+        'staff': {
+            heading: 'CMD Staff',
+            notice: '',
+            external: false,
+        },
+    };
+    let committeeChoice = null;   // null until chosen; 'staff' or a ClaimCategory value
+
+    function isCommitteeLocked() {
+        return !!committeeChoice && committeeChoice !== 'staff';
+    }
+
+    function chooseCommittee(choice) {
+        committeeChoice = choice;
+        const c = COMMITTEE_COPY[choice];
+        document.getElementById('committeeStep').style.display = 'none';
+        document.getElementById('authStep').style.display = 'flex';
+
+        const badge = document.getElementById('committeeBadge');
+        badge.textContent = choice === 'staff' ? 'CMD Staff' : 'Claiming for: ' + choice;
+        badge.style.display = 'inline-block';
+        document.getElementById('loginHeading').textContent = c.heading;
+
+        const notice = document.getElementById('extNotice');
+        notice.innerHTML = c.notice;
+        notice.style.display = c.notice ? 'block' : 'none';
+
+        document.getElementById('extSubmitBtn').style.display = c.external ? '' : 'none';
+        document.getElementById('signInLead').textContent = c.external
+            ? 'Already have a CMD Microsoft account?'
+            : '';
+        document.getElementById('signInLead').style.display = c.external ? '' : 'none';
+        const signInBtn = document.getElementById('signInBtn');
+        signInBtn.className = c.external ? 'btn btn-outline' : 'btn btn-primary';
+        document.getElementById('changeCommitteeBtn').style.display = '';
+        window.scrollTo(0, 0);
+    }
+
+    function backToCommitteeStep() {
+        committeeChoice = null;
+        document.getElementById('authStep').style.display = 'none';
+        document.getElementById('committeeStep').style.display = 'flex';
+        window.scrollTo(0, 0);
+    }
+
+    // Lock (or unlock, for staff) the category control on the claim form.
+    function applyCommitteeLock() {
+        const sel = document.getElementById('claimCategory');
+        const toggle = document.getElementById('claimCategoryToggle');
+        const lock = document.getElementById('committeeLock');
+        if (isCommitteeLocked()) {
+            sel.value = committeeChoice;
+            sel.style.display = 'none';
+            toggle.style.display = 'none';
+            document.getElementById('committeeLockValue').textContent = committeeChoice;
+            lock.style.display = 'flex';
+        } else {
+            lock.style.display = 'none';
+            if (!isExternalMode) { sel.style.display = ''; toggle.style.display = 'none'; }
+        }
+    }
+
+    // "Wrong committee? Start over" — discard the draft and return to step 1.
+    // A signed-in user stays signed in; only the claim is discarded.
+    function changeCommittee() {
+        const hasDraft = document.getElementById('purpose').value.trim() ||
+            [...document.querySelectorAll('#travelDays input, #expenseItems input')]
+                .some(i => i.type !== 'file' && i.value && i.value !== '0');
+        if (hasDraft && !confirm('Start over? What you have entered on this claim will be discarded.')) return;
+        committeeChoice = null;
+        isExternalMode = false;
+        resetForm();
+        hideAllReceiptViews();
+        document.getElementById('externalSubmitterCard').style.display = 'none';
+        document.getElementById('claimCategoryToggle').style.display = 'none';
+        document.getElementById('claimCategory').style.display = '';
+        document.getElementById('loginScreen').style.display = 'flex';
+        backToCommitteeStep();
+    }
+
     function syncClaimCategoryFromRadio(radio) {
         document.getElementById('claimCategory').value = radio.value;
     }
@@ -1766,11 +1973,19 @@
         document.querySelectorAll('input[name="claimCategoryRadio"]')
             .forEach(r => { r.checked = false; });
 
+        // The committee gate has already decided OC vs LC; lock it in.
+        applyCommitteeLock();
+
         if (document.querySelectorAll('.travel-day').length === 0) { addDay(); }
     }
 
     async function signIn() {
         try {
+            // A cached session (returning user) is reused rather than re-prompting —
+            // on the capture host it is no longer auto-entered at page load, so the
+            // committee gate always comes first.
+            const cached = msalInstance.getAllAccounts();
+            if (cached.length > 0) { await handleAuth(cached[0]); return; }
             const response = await msalInstance.loginPopup(loginRequest);
             await handleAuth(response.account);
         } catch (err) {
@@ -1799,7 +2014,15 @@
         document.getElementById('userBar').style.display = 'flex';
         document.getElementById('userName').textContent = currentUser.name || currentUser.username;
         // Capture host shows the vehicle/receipt hub; console host goes straight to the dashboard (via routeReceiptViews).
-        if (APP_MODE === 'capture') document.getElementById('vehicleSelectScreen').style.display = 'flex';
+        if (APP_MODE === 'capture') {
+            if (isCommitteeLocked()) {
+                // DEXCOM (or a signed-in OC/LC member): straight to the claim
+                // form with the category locked — the staff hub isn't theirs.
+                choosePersonalVehicle();
+            } else {
+                document.getElementById('vehicleSelectScreen').style.display = 'flex';
+            }
+        }
 
         // Receipt role detection (spec §4). Non-blocking and fails OPEN — if we
         // can't read group membership we leave the receipt entry visible rather
@@ -1818,7 +2041,8 @@
         if (APP_MODE !== 'console') return;
         const t=document.getElementById('appTitle'); if(t) t.textContent='Receipt Reconciliation';
         const lh=document.getElementById('loginHeading'); if(lh) lh.textContent='Reconciliation Console — Staff Sign In';
-        ['extNotice','extSubmitBtn'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; });
+        ['extNotice','extSubmitBtn','committeeStep','committeeBadge','changeCommitteeBtn'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; });
+        const as=document.getElementById('authStep'); if(as) as.style.display='flex';
     }
 
     // Receipt roles, resolved from Entra security-group membership (spec §4).
@@ -1889,10 +2113,18 @@
         allChurches = [];
         selectedChurches = new Set();
         distPreviousOdometer = null;
+        if (APP_MODE === 'capture') {
+            isExternalMode = false;
+            document.getElementById('externalSubmitterCard').style.display = 'none';
+            backToCommitteeStep();
+        }
     }
 
-    // Check for existing session on load
+    // Check for existing session on load. The console host auto-enters; the
+    // capture host does NOT, so a returning user still meets the committee
+    // gate first (signIn() then reuses the cached account without a popup).
     async function checkExistingSession() {
+        if (APP_MODE === 'capture') return;
         const accounts = msalInstance.getAllAccounts();
         if (accounts.length > 0) {
             await handleAuth(accounts[0]);
@@ -1906,6 +2138,7 @@
         document.getElementById('vehicleSelectScreen').style.display = 'none';
         document.getElementById('mainForm').style.display = 'block';
         document.getElementById('claimDate').valueAsDate = new Date();
+        applyCommitteeLock();
         if (document.querySelectorAll('.travel-day').length === 0) { addDay(); }
     }
 
@@ -2223,7 +2456,7 @@
                 throw new Error(
                     "Your Microsoft account doesn't have access to the Travel Expense Claims list. " +
                     "If you're an Ordaining Council or District Licensing Committee member, please sign out " +
-                    "and use the \"File a claim without signing in →\" link on the sign-in screen instead."
+                    "and choose Ordaining Council or Licensing Committee on the first screen, then continue without signing in."
                 );
             }
             const listId = lists.value[0].id;
@@ -2729,10 +2962,13 @@
         // External-mode users stay on the public claim form and never see the
         // authenticated vehicle picker (district vehicles aren't theirs to
         // log). Authenticated users go back to the vehicle picker as normal.
+        applyCommitteeLock();
         if (isExternalMode) {
             document.getElementById('externalName').value = '';
             document.getElementById('externalEmail').value = '';
             document.getElementById('externalSubmitterCard').style.display = 'block';
+            document.getElementById('mainForm').style.display = 'block';
+        } else if (isCommitteeLocked()) {
             document.getElementById('mainForm').style.display = 'block';
         } else {
             document.getElementById('mainForm').style.display = 'none';
