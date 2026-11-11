@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # index.html parses and its inline script has no syntax error.
+      - run: node scripts/check-index.mjs
+      # Future tests go here (e.g. node --test "test/*.mjs") once the repo has any.
