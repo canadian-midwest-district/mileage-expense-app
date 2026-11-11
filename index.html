@@ -19,10 +19,7 @@
       Keep this list in step with scripts/check-index.mjs, which fails if a fetch target
       appears that connect-src does not name.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://alcdn.msauth.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://graph.microsoft.com https://cmacmd.sharepoint.com https://*.sharepoint.com https://*.svc.ms https://login.microsoftonline.com https://receipt-processor-eight.vercel.app https://dashboard.canadianmidwest.ca https://sgoxvyjbyqtvsfurkllf.supabase.co; frame-src 'self' https://login.microsoftonline.com; base-uri 'self'; form-action 'none'; object-src 'none'">
-    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"
-            integrity="sha384-mz+8Q3jA4XBFbnyAsyQegn/0LHvziH7qHLBa9GzcU3HzeWj9J16SXM5S+TsmPBy0"
-            crossorigin="anonymous"></script>
+    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
     <style>
         :root {
             --primary: #0078d4;
@@ -2105,7 +2102,7 @@
             const response = await msalInstance.loginPopup(loginRequest);
             await handleAuth(response.account);
         } catch (err) {
-            showToast('Sign-in failed. Please try again.');
+            showToast('Sign-in failed. Please try again.' + (err && (err.errorCode || err.name) ? ' (' + String(err.errorCode || err.name).replace(/[^a-z0-9_ -]/gi,'').slice(0,40) + ')' : ''));
             console.error(err);
         }
     }
