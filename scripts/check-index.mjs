@@ -35,5 +35,66 @@ for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
 }
 if (checked === 0) fail("no inline <script> found to check");
 
+// ---- Security checks (2026-11: Quick Picks injection, javascript: links, CSP, SRI) ----
+
+// Returns the source of `function <name>(...) { ... }` by brace matching, or null.
+function functionBody(src, name) {
+  const m = new RegExp(`function\\s+${name}\\s*\\(`).exec(src);
+  if (!m) return null;
+  const open = src.indexOf("{", src.indexOf(")", m.index));
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) return src.slice(m.index, i + 1);
+  }
+  return null;
+}
+
+// Quick Picks (Receipt Category Quick Picks) are SharePoint list values. These
+// renderers must write them as text. Fail if one assigns innerHTML from a template
+// that interpolates a list field (label/icon/glCode/Title/Icon/GLCode/Category...)
+// without an escape function around it.
+const QUICK_PICK_RENDERERS = ["renderReceiptCategories", "renderReceiptOtherResults", "renderReceiptSelectedChip", "fillCategoryTile"];
+const LIST_FIELD = /\b(label|icon|glCode|Title|Icon|GLCode|Category|category)\b/;
+const ESCAPED = /^(?:reEsc|reconEsc|escapeHtml|escHtml)\(/;
+for (const name of QUICK_PICK_RENDERERS) {
+  const body = functionBody(html, name);
+  if (!body) { fail(`Quick Picks renderer ${name}() not found - update scripts/check-index.mjs if it was renamed`); continue; }
+  for (const stmt of body.matchAll(/\.innerHTML\s*\+?=\s*([^;]*(?:`[^`]*`[^;]*)*);/g)) {
+    for (const ex of stmt[1].matchAll(/\$\{([^}]*)\}/g)) {
+      const inner = ex[1].trim();
+      if (LIST_FIELD.test(inner) && !ESCAPED.test(inner)) {
+        fail(`${name}() assigns innerHTML with an unescaped list field \${${inner}} - use textContent or an escape function`);
+      }
+    }
+  }
+}
+
+// href values built from list data must go through safeHttpsUrl (no javascript: links).
+for (const m of html.matchAll(/href="\$\{reconEsc\((?!safeHttpsUrl\()[^"]*"/g)) {
+  fail(`href built from list data without safeHttpsUrl(): ${m[0].slice(0, 80)}`);
+}
+
+// Content-Security-Policy: present, and every https origin the page names is allowed by it.
+const cspTag = /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(html);
+if (!cspTag) {
+  fail("index.html has no Content-Security-Policy <meta>");
+} else {
+  const csp = cspTag[1];
+  if (/default-src\s+(?!'none')/.test(csp)) fail("CSP default-src must be 'none'");
+  if (/script-src[^;]*https?:(?!\/\/alcdn\.msauth\.net)/.test(csp)) fail("CSP script-src names an origin other than the MSAL CDN");
+  const body = html.replace(/<meta\s+http-equiv="Content-Security-Policy"[^>]*>/i, "").replace(/<!--[\s\S]*?-->/g, "");
+  for (const o of new Set([...body.matchAll(/https:\/\/[a-z0-9.-]+/gi)].map((m) => m[0].toLowerCase()))) {
+    if (!csp.toLowerCase().includes(o)) fail(`page names ${o} but the CSP does not allow it`);
+  }
+}
+
+// SRI on the MSAL script, and the pinned version must stay pinned.
+const msal = /<script\b[^>]*src="https:\/\/alcdn\.msauth\.net\/browser\/(\d+\.\d+\.\d+)\/[^"]*"[^>]*>/i.exec(html);
+if (!msal) fail("MSAL <script> from alcdn.msauth.net/browser/<exact version>/ not found");
+else if (!/integrity="sha384-[A-Za-z0-9+/=]+"/.test(msal[0]) || !/crossorigin="anonymous"/.test(msal[0])) {
+  fail("MSAL <script> needs integrity=sha384-... and crossorigin=anonymous");
+}
+
 if (failed) process.exit(1);
 console.log(`index.html OK (${checked} inline script(s) syntax-checked)`);

@@ -4,7 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Mileage & Expense Claim</title>
-    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+    <!--
+      Content-Security-Policy: every origin this page really talks to, and nothing else.
+        script-src   MSAL's CDN (pinned 2.38.0, also SRI-checked below) + inline: the page is one
+                     file of inline scripts and onclick handlers, so 'unsafe-inline' cannot go
+                     until those move out. What the policy DOES buy: no third-party script, no
+                     eval, no plugins, and no request to any origin not listed in connect-src.
+        connect-src  Microsoft Graph (SharePoint lists/files, /me), Microsoft sign-in (MSAL token
+                     calls), the receipt reader (receipt-processor), the Dashboard
+                     (roster-check -> reader pass), the Supabase edge function (external claims).
+        frame-src    login.microsoftonline.com: MSAL's hidden silent-sign-in frame.
+        img-src      self (logo), data:, blob: (receipt photos picked on the device).
+      frame-ancestors is not honoured in a <meta>; GitHub Pages cannot send the header.
+      Keep this list in step with scripts/check-index.mjs, which fails if a fetch target
+      appears that connect-src does not name.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://alcdn.msauth.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://graph.microsoft.com https://login.microsoftonline.com https://receipt-processor-eight.vercel.app https://dashboard.canadianmidwest.ca https://sgoxvyjbyqtvsfurkllf.supabase.co; frame-src https://login.microsoftonline.com; base-uri 'self'; form-action 'none'; object-src 'none'">
+    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"
+            integrity="sha384-mz+8Q3jA4XBFbnyAsyQegn/0LHvziH7qHLBa9GzcU3HzeWj9J16SXM5S+TsmPBy0"
+            crossorigin="anonymous"></script>
     <style>
         :root {
             --primary: #0078d4;
@@ -1238,7 +1256,8 @@
         </div>
         <div class="field">
             <label>Email Address</label>
-            <input type="email" id="externalEmail" placeholder="you@example.com">
+            <input type="email" id="externalEmail" placeholder="you@example.com" onchange="checkExternalRoster()">
+            <div id="extEmailNotice" class="committee-notice" style="display:none; margin-top:8px;"></div>
         </div>
     </div>
 
@@ -1943,6 +1962,8 @@
         if (hasDraft && !confirm('Start over? What you have entered on this claim will be discarded.')) return;
         committeeChoice = null;
         isExternalMode = false;
+        rosterState = null;
+        showExtEmailNotice('');
         resetForm();
         hideAllReceiptViews();
         document.getElementById('externalSubmitterCard').style.display = 'none';
@@ -1955,6 +1976,101 @@
     function syncClaimCategoryFromRadio(radio) {
         document.getElementById('claimCategory').value = radio.value;
     }
+
+    // ========== RECEIPT READER FOR COMMITTEE MEMBERS (no account) ==========
+    // The reader is paid per use, so a person without a district login gets it
+    // only if their address is on that committee's list. The Dashboard answers
+    // that question and, if yes, hands back a short-lived pass (the page never
+    // sees a roster). If the address is not on the list the claim goes ahead
+    // exactly as before — photo attached to the line, total typed by hand — and
+    // the reader is never called.
+    const ROSTER_CHECK_URL = 'https://dashboard.canadianmidwest.ca/api/receipts/roster-check';
+    const UNKNOWN_EMAIL_NOTICE =
+        "We don't see this email on our committee lists. Your claim will still be submitted, " +
+        'and the office will confirm it before it is processed.';
+    // state: 'recognised' (pass held) | 'unknown' (not on the list) | 'unavailable' (could not ask)
+    let rosterState = null;   // { email, committee, state, pass, expiresAt }
+
+    function externalEmailValue() {
+        return (document.getElementById('externalEmail').value || '').trim().toLowerCase();
+    }
+
+    function showExtEmailNotice(text) {
+        const el = document.getElementById('extEmailNotice');
+        if (!el) return;
+        el.textContent = text || '';
+        el.style.display = text ? 'block' : 'none';
+    }
+
+    async function checkExternalRoster() {
+        if (!isExternalMode) return;
+        const email = externalEmailValue();
+        showExtEmailNotice('');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !isCommitteeLocked()) { rosterState = null; return; }
+        const committee = committeeChoice;
+        if (rosterState && rosterState.email === email && rosterState.committee === committee &&
+            (rosterState.state !== 'recognised' || rosterState.expiresAt > Date.now() + 60000)) {
+            if (rosterState.state === 'unknown') showExtEmailNotice(UNKNOWN_EMAIL_NOTICE);
+            return;
+        }
+        try {
+            const res = await fetch(ROSTER_CHECK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, committee }),
+            });
+            if (!res.ok) throw new Error('ROSTER_HTTP_' + res.status);
+            const d = await res.json();
+            // The person may have edited the field while we waited.
+            if (externalEmailValue() !== email || committeeChoice !== committee) return;
+            if (d.recognised === true && typeof d.pass === 'string') {
+                rosterState = { email, committee, state: 'recognised', pass: d.pass, expiresAt: Date.parse(d.expiresAt) || (Date.now() + 3600000) };
+            } else {
+                rosterState = { email, committee, state: 'unknown' };
+                showExtEmailNotice(UNKNOWN_EMAIL_NOTICE);
+            }
+        } catch (err) {
+            // Could not ask (offline, limit, server down): no reader, no claim about
+            // their address. Typing the amount works exactly as it always has.
+            console.warn('roster check unavailable', err);
+            rosterState = { email, committee, state: 'unavailable' };
+        }
+    }
+
+    // A receipt photo was chosen on an expense line in the no-account path.
+    // The photo is never touched (it stays on the line); the reader only fills
+    // in a blank amount / description, and only for a recognised address.
+    async function onExternalReceiptChosen(input) {
+        if (!isExternalMode || !input.files || !input.files[0]) return;
+        const file = input.files[0];
+        if (!/^image\//.test(file.type)) return;
+        await checkExternalRoster();
+        if (!rosterState || rosterState.state !== 'recognised') return;   // unknown: NO call to the reader
+        const line = input.closest('.expense-item') || input.parentElement;
+        try {
+            const blob = await compressImage(file);
+            const fd = new FormData();
+            fd.append('receipt', blob, 'receipt.jpg');
+            const res = await fetch(CONFIG.receiptOcrUrl + '?submitted_on=' + localToday(), {
+                method: 'POST', body: fd,
+                headers: { 'X-Receipt-Pass': rosterState.pass },
+            });
+            if (res.status === 401) { rosterState = null; return; }   // pass lapsed; next photo asks again
+            if (!res.ok) return;
+            const d = await res.json();
+            const amt = line.querySelector('.expense-amount-input');
+            const desc = line.querySelector('input[type="text"]');
+            if (amt && !amt.value && d.total != null && !isNaN(d.total)) { amt.value = Number(d.total).toFixed(2); recalc(); }
+            if (desc && !desc.value && d.vendor) desc.value = String(d.vendor).slice(0, 80);
+            showToast('Receipt read. Please check the amount.');
+        } catch (err) {
+            console.warn('reader unavailable', err);   // typing the total still works
+        }
+    }
+    document.addEventListener('change', (e) => {
+        const t = e.target;
+        if (t && t.classList && t.classList.contains('receipt-input')) onExternalReceiptChosen(t);
+    });
 
     function startExternalSubmission() {
         isExternalMode = true;
@@ -3187,7 +3303,14 @@
             const ocrUrl = CONFIG.receiptOcrUrl +
                 (CONFIG.receiptOcrUrl.includes('?') ? '&' : '?') +
                 'submitted_on=' + localToday();
-            const res = await fetch(ocrUrl, { method: 'POST', body: fd });
+            // The reader spends district AI credit, so it wants to know who is asking:
+            // the signed-in user's Microsoft token (a fresh one — the capture can
+            // outlive the token acquired at sign-in).
+            try { await refreshAccessToken(); } catch (e) { console.warn('token refresh before OCR failed', e); }
+            const res = await fetch(ocrUrl, {
+                method: 'POST', body: fd,
+                headers: { 'Authorization': `Bearer ${accessToken}` },
+            });
             if (!res.ok) throw new Error('OCR_HTTP_' + res.status);
             data = await res.json();
         } catch (err) {
@@ -3380,6 +3503,24 @@
         renderReceiptCategories();
     }
 
+    // Quick Picks Title / Icon / GLCode are SharePoint list values anyone with
+    // edit rights on the list can change: they are written with textContent so
+    // a value like <img onerror=...> renders as text instead of running.
+    function fillCategoryTile(tile, c, showGl) {
+        const icon = document.createElement('span');
+        icon.className = 'tile-icon';
+        icon.textContent = c.icon || '🏷️';
+        const label = document.createElement('span');
+        label.textContent = c.label;
+        tile.append(icon, label);
+        if (showGl) {
+            const gl = document.createElement('span');
+            gl.className = 'tile-gl';
+            gl.textContent = c.glCode;
+            tile.append(gl);
+        }
+    }
+
     function renderReceiptCategories() {
         const grid = document.getElementById('receiptCategoryGrid');
         grid.innerHTML = '';
@@ -3390,7 +3531,7 @@
             tile.type = 'button';
             tile.className = 'category-tile' + (c.glCode === selGl ? ' selected' : '');
             tile.onclick = () => selectReceiptCategory(c);
-            tile.innerHTML = `<span class="tile-icon">${c.icon || '🏷️'}</span><span>${c.label}</span>`;
+            fillCategoryTile(tile, c, false);
             grid.appendChild(tile);
         });
         // "Other…" tile opens the searchable picker for the non-tile GL codes.
@@ -3446,8 +3587,7 @@
             tile.type = 'button';
             tile.className = 'category-tile' + (c.glCode === selGl ? ' selected' : '');
             tile.onclick = () => selectReceiptCategory(c);
-            tile.innerHTML = `<span class="tile-icon">${c.icon || '🏷️'}</span>` +
-                `<span>${c.label}</span><span class="tile-gl">${c.glCode}</span>`;
+            fillCategoryTile(tile, c, true);
             box.appendChild(tile);
         });
     }
@@ -3456,8 +3596,14 @@
         const chip = document.getElementById('receiptSelectedChip');
         if (!selectedReceiptCategory) { chip.style.display = 'none'; return; }
         chip.style.display = 'block';
-        chip.innerHTML = `Selected: <strong>${selectedReceiptCategory.icon || '🏷️'} ${selectedReceiptCategory.label}</strong> ` +
-            `<span style="color:var(--text-light);">(${selectedReceiptCategory.glCode})</span>`;
+        // Title / Icon / GLCode come from a SharePoint list: text, never markup.
+        chip.textContent = 'Selected: ';
+        const strong = document.createElement('strong');
+        strong.textContent = `${selectedReceiptCategory.icon || '🏷️'} ${selectedReceiptCategory.label}`;
+        const gl = document.createElement('span');
+        gl.style.color = 'var(--text-light)';
+        gl.textContent = `(${selectedReceiptCategory.glCode})`;
+        chip.append(strong, ' ', gl);
     }
 
     // ReceiptRef = REC-YYYY-NNNN, sequential per year, zero-padded to 4.
@@ -3873,6 +4019,9 @@
     function sourceOf(f){ return isNoReceipt(f) ? 'console' : (f.IngestSource||'mobile'); }
     function sourceLabel(f){ const s=sourceOf(f); return s==='email'?'&#9993; Email':s==='console'?'&#9998; Console':'&#128241; Phone'; }
 
+    // Links built from list data may only ever be https: — a javascript: or
+    // data: value in a SharePoint field must not become a clickable href.
+    function safeHttpsUrl(u){ try{ return new URL(String(u==null?'':u)).protocol==='https:' ? String(u) : ''; }catch(e){ return ''; } }
     function reconEsc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
     function hideAllReceiptViews(){
@@ -4397,11 +4546,11 @@
                         : `<div class="recon-noimg"><a href="${u}" target="_blank" rel="noopener">Open ${reconEsc(label.toLowerCase())}${/pdf/.test(type)?' (PDF)':''}</a></div>`;
                     return `<div class="receipt-gallery-item">${lab}${body}</div>`;
                 }catch(e){ console.error(e);
-                    return `<div class="receipt-gallery-item">${lab}<div class="recon-noimg">Couldn’t load it. <a href="${reconEsc(url)}" target="_blank" rel="noopener">Open in SharePoint</a></div></div>`;
+                    return `<div class="receipt-gallery-item">${lab}<div class="recon-noimg">Couldn’t load it. <a href="${reconEsc(safeHttpsUrl(url))}" target="_blank" rel="noopener">Open in SharePoint</a></div></div>`;
                 }
             }));
             box.innerHTML=items.length>1?`<div class="receipt-gallery">${parts.join('')}</div>`:parts[0];
-        }catch(e){ console.error(e); box.innerHTML=`<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(primary||extra[0])}" target="_blank" rel="noopener">Open in SharePoint</a></div>`; }
+        }catch(e){ console.error(e); box.innerHTML=`<div class="recon-noimg">Couldn’t load image. <a href="${reconEsc(safeHttpsUrl(primary||extra[0]))}" target="_blank" rel="noopener">Open in SharePoint</a></div>`; }
     }
 
     async function saveReconRow(id){
