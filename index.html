@@ -1824,11 +1824,47 @@
 
 <script>
     // ========== MSAL AUTH ==========
+    // <signin-logic> pure decision logic; scripts/signin-logic.test.mjs extracts and tests this block.
+    // Pop-up class failures: the browser refused or lost the sign-in window (iOS home-screen app,
+    // in-app browsers, blockers). 'user_cancelled' is deliberately NOT here: the person closed the
+    // window on purpose, so redirecting them anyway would be wrong.
+    const POPUP_CLASS_ERRORS = ['popup_window_error', 'empty_window_error', 'monitor_window_timeout'];
+    function isPopupClassError(err) {
+        if (!err) return false;
+        const code = String(err.errorCode || err.code || '');
+        const msg = String(err.message || err.errorMessage || '');
+        return POPUP_CLASS_ERRORS.some(c => code === c || msg.indexOf(c) === 0);
+    }
+    function isUserCancelled(err) {
+        return !!err && (err.errorCode === 'user_cancelled' || String(err.message || '').indexOf('user_cancelled') === 0);
+    }
+    // Contexts where window.open is known (or very likely) to return null, so the pop-up is skipped.
+    // Conservative: named in-app browsers, iOS web views (WebKit without the Safari token, which is
+    // also what a home-screen app looks like) and Android web views. A false positive only costs a
+    // full-page redirect, which works everywhere; a false negative is caught by the pop-up fallback.
+    const IN_APP_UA = /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Teams\/|Outlook-iOS|Outlook-Android|OutlookMobile|LinkedInApp|Snapchat|; wv\)/i;
+    function shouldSkipPopup(env) {
+        env = env || {};
+        if (env.navigatorStandalone === true || env.displayModeStandalone === true) return true;
+        const ua = String(env.userAgent || '');
+        if (IN_APP_UA.test(ua)) return true;
+        if (/iPhone|iPad|iPod/.test(ua) && /AppleWebKit/.test(ua) && !/Safari\//.test(ua)) return true;
+        return false;
+    }
+    // The Entra app registration lists the travel. and expenses. site roots (origin plus a
+    // trailing slash, no file name). GitHub Pages also serves
+    // the same page at /index.html, which is NOT registered, so fold it onto the directory URL.
+    // Any other path (e.g. the SharePoint-hosted copy) is left exactly as it is.
+    function normalizeRedirectUri(origin, pathname) {
+        return origin + String(pathname || '/').replace(/\/index\.html?$/i, '/');
+    }
+    // </signin-logic>
+
     const msalConfig = {
         auth: {
             clientId: CONFIG.clientId,
             authority: `https://login.microsoftonline.com/${CONFIG.tenantId}`,
-            redirectUri: window.location.origin + window.location.pathname,
+            redirectUri: normalizeRedirectUri(window.location.origin, window.location.pathname),
         },
         cache: {
             cacheLocation: 'localStorage',
@@ -1837,6 +1873,12 @@
     };
 
     const msalInstance = new msal.PublicClientApplication(msalConfig);
+    // Must run before ANY other MSAL call (getAllAccounts, acquireToken*): it consumes the
+    // #code=... fragment when the page is loaded back from a sign-in redirect. Everything that
+    // needs to know "is the user signed in" awaits this promise first.
+    const redirectReady = msalInstance.handleRedirectPromise()
+        .then(r => ({ result: r, error: null }))
+        .catch(err => ({ result: null, error: err }));
 
     const loginRequest = {
         scopes: ['User.Read', 'Sites.ReadWrite.All']
@@ -2092,36 +2134,174 @@
         if (document.querySelectorAll('.travel-day').length === 0) { addDay(); }
     }
 
+    // ---- Sign-in plumbing: pop-up first, redirect where pop-ups cannot work ----
+    const NO_SIGNIN_MSG = 'Sign-in can’t open in this window. Open this page in Safari or Chrome to sign in.';
+    const RESUME_KEY = 'cmdSignInResume';
+    const REDIRECT_MARK = 'cmdRedirectAt';
+
+    function detectEnv() {
+        let dm = false;
+        try { dm = !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches); } catch (e) {}
+        return { navigatorStandalone: navigator.standalone === true, displayModeStandalone: dm,
+                 userAgent: navigator.userAgent || '' };
+    }
+    function ssGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+    function ssSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }
+    function ssDel(k) { try { sessionStorage.removeItem(k); } catch (e) {} }
+
+    // What survives a full-page sign-in redirect. The page keeps nothing of its own (a reload
+    // loses everything), so before leaving we stash the minimum in sessionStorage (this tab only,
+    // cleared when it closes): the committee choice, which form was open, and the typed values of
+    // that form. Receipt photos/files cannot be serialised and are NOT kept.
+    function formFields(root) {
+        const f = {};
+        root.querySelectorAll('input, select, textarea').forEach(el => {
+            if (!el.id || el.type === 'file') return;
+            f[el.id] = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+        });
+        return f;
+    }
+    function saveResumeState() {
+        const main = document.getElementById('mainForm');
+        const dist = document.getElementById('districtForm');
+        const snap = { v: 1, at: Date.now(), committee: committeeChoice, screen: null };
+        if (main.style.display === 'block') {
+            snap.screen = 'main';
+            snap.main = {
+                fields: formFields(main),
+                days: [...document.querySelectorAll('#travelDays .travel-day input')].map(i => i.value),
+                expenses: [...document.querySelectorAll('#expenseItems .expense-item')].map(d => {
+                    const ins = d.querySelectorAll('input:not([type=file])');
+                    return [ins[0] ? ins[0].value : '', ins[1] ? ins[1].value : ''];
+                }),
+            };
+        } else if (dist.style.display === 'block') {
+            snap.screen = 'district';
+            snap.dist = { unclaimed: isPersonalUnclaimed, fields: formFields(dist) };
+        }
+        ssSet(RESUME_KEY, JSON.stringify(snap));
+    }
+    function takeResumeState() {
+        const raw = ssGet(RESUME_KEY);
+        ssDel(RESUME_KEY);
+        if (!raw) return null;
+        try {
+            const s = JSON.parse(raw);
+            // A snapshot older than an hour is not "the claim I was just filling in".
+            return (s && s.v === 1 && Date.now() - s.at < 3600000) ? s : null;
+        } catch (e) { return null; }
+    }
+    function fillFields(fields) {
+        Object.keys(fields || {}).forEach(id => {
+            const el = document.getElementById(id);
+            if (!el || el.type === 'file') return;
+            if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!fields[id];
+            else el.value = fields[id];
+        });
+    }
+    async function applyResume(s) {
+        if (!s || !s.screen) return;
+        if (s.screen === 'main' && s.main) {
+            choosePersonalVehicle();
+            fillFields(s.main.fields);
+            const km = s.main.days || [];
+            while (document.querySelectorAll('#travelDays .travel-day').length < km.length) addDay();
+            document.querySelectorAll('#travelDays .travel-day input').forEach((i, n) => { if (km[n] !== undefined) i.value = km[n]; });
+            (s.main.expenses || []).forEach(e => {
+                addExpense();
+                const items = document.querySelectorAll('#expenseItems .expense-item');
+                const ins = items[items.length - 1].querySelectorAll('input:not([type=file])');
+                ins[0].value = e[0]; ins[1].value = e[1];
+            });
+            toggleEtransfer();
+            applyCommitteeLock();
+            recalc();
+            showToast((s.main.expenses || []).length
+                ? 'Signed in again – your claim is restored. Please re-attach any receipt photos.'
+                : 'Signed in again – your claim is restored.', 7000);
+        } else if (s.screen === 'district' && s.dist) {
+            if (s.dist.unclaimed) await choosePersonalUnclaimed(); else await chooseDistrictVehicle();
+            const veh = s.dist.fields && s.dist.fields.distVehicle;
+            fillFields(s.dist.fields);
+            if (veh) await onDistrictVehicleChange();
+            fillFields(s.dist.fields);   // the vehicle change clears dependent readings; put them back
+            document.querySelectorAll('#districtForm input').forEach(i => i.dispatchEvent(new Event('input', { bubbles: true })));
+            showToast('Signed in again – your trip log is restored.', 7000);
+        }
+    }
+
+    // Full-page redirect. Guarded so a redirect that keeps failing cannot bounce forever.
+    async function redirectInteractive(kind, req) {
+        const last = parseInt(ssGet(REDIRECT_MARK) || '0', 10);
+        if (last && Date.now() - last < 45000) throw new Error('redirect_loop');
+        ssSet(REDIRECT_MARK, String(Date.now()));
+        saveResumeState();
+        // Come back to the registered redirect URI itself (not /index.html), so MSAL need not hop.
+        const rreq = Object.assign({}, req, { redirectStartPage: msalConfig.auth.redirectUri });
+        if (kind === 'login') await msalInstance.loginRedirect(rreq);
+        else await msalInstance.acquireTokenRedirect(rreq);
+        // The browser is navigating away; never let the caller carry on with no token.
+        return new Promise(() => {});
+    }
+
+    // THE token helper: silent -> pop-up -> redirect (pop-up class failures only).
+    // Sets accessToken. Every call site uses this; nothing else calls acquireToken*.
+    async function acquireToken(account) {
+        const req = { scopes: loginRequest.scopes, account: account || currentUser };
+        let resp;
+        try {
+            resp = await msalInstance.acquireTokenSilent(req);
+        } catch (silentErr) {
+            if (navigator.onLine === false) throw silentErr;     // offline: a sign-in prompt would not help
+            if (shouldSkipPopup(detectEnv())) {
+                resp = await redirectInteractive('token', req);
+            } else {
+                try { resp = await msalInstance.acquireTokenPopup(req); }
+                catch (popErr) {
+                    if (!isPopupClassError(popErr)) throw popErr;
+                    resp = await redirectInteractive('token', req);
+                }
+            }
+        }
+        ssDel(REDIRECT_MARK);
+        accessToken = resp.accessToken;
+        return resp;
+    }
+
     async function signIn() {
         try {
+            await redirectReady;   // never touch MSAL state before the redirect response is consumed
             // A cached session (returning user) is reused rather than re-prompting —
             // on the capture host it is no longer auto-entered at page load, so the
             // committee gate always comes first.
             const cached = msalInstance.getAllAccounts();
             if (cached.length > 0) { await handleAuth(cached[0]); return; }
-            const response = await msalInstance.loginPopup(loginRequest);
-            await handleAuth(response.account);
+            if (!shouldSkipPopup(detectEnv())) {
+                try {
+                    const response = await msalInstance.loginPopup(loginRequest);
+                    await handleAuth(response.account);
+                    return;
+                } catch (err) {
+                    if (isUserCancelled(err)) { showToast('Sign-in cancelled. Tap “Sign in with Microsoft” to try again.'); return; }
+                    if (!isPopupClassError(err)) throw err;
+                    console.warn('Sign-in pop-up unavailable, using redirect:', err.errorCode || err.message);
+                }
+            }
+            await redirectInteractive('login', loginRequest);
         } catch (err) {
-            showToast('Sign-in failed. Please try again.' + (err && (err.errorCode || err.name) ? ' (' + String(err.errorCode || err.name).replace(/[^a-z0-9_ -]/gi,'').slice(0,40) + ')' : ''));
             console.error(err);
+            if (isPopupClassError(err) || err.message === 'redirect_loop' || err.errorCode === 'interaction_in_progress') {
+                showToast(NO_SIGNIN_MSG, 9000);
+            } else {
+                const code = err && (err.errorCode || err.name) ? ' (' + String(err.errorCode || err.name).replace(/[^a-z0-9_ -]/gi, '').slice(0, 40) + ')' : '';
+                showToast('Sign-in failed. Please try again.' + code);
+            }
         }
     }
 
     async function handleAuth(account) {
         currentUser = account;
-        try {
-            const tokenResponse = await msalInstance.acquireTokenSilent({
-                scopes: loginRequest.scopes,
-                account: account
-            });
-            accessToken = tokenResponse.accessToken;
-        } catch (err) {
-            const tokenResponse = await msalInstance.acquireTokenPopup({
-                scopes: loginRequest.scopes,
-                account: account
-            });
-            accessToken = tokenResponse.accessToken;
-        }
+        await acquireToken(account);
 
         document.getElementById('loginScreen').style.display = 'none';
         document.getElementById('userBar').style.display = 'flex';
@@ -2210,7 +2390,7 @@
     }
 
     function signOut() {
-        msalInstance.logoutPopup();
+        const leaving = currentUser;
         currentUser = null;
         accessToken = null;
         document.getElementById('loginScreen').style.display = 'flex';
@@ -2231,12 +2411,48 @@
             document.getElementById('externalSubmitterCard').style.display = 'none';
             backToCommitteeStep();
         }
+        // Local state is cleared above. Now end the Microsoft session: pop-up where it works,
+        // full-page redirect in a home-screen app / in-app browser (a pop-up is null there).
+        const out = { account: leaving, postLogoutRedirectUri: msalConfig.auth.redirectUri };
+        if (shouldSkipPopup(detectEnv())) { msalInstance.logoutRedirect(out).catch(console.error); }
+        else {
+            msalInstance.logoutPopup(out).catch(err => {
+                if (isPopupClassError(err)) msalInstance.logoutRedirect(out).catch(console.error);
+                else console.error(err);
+            });
+        }
     }
 
     // Check for existing session on load. The console host auto-enters; the
     // capture host does NOT, so a returning user still meets the committee
     // gate first (signIn() then reuses the cached account without a popup).
     async function checkExistingSession() {
+        // First: did this page load because we are coming BACK from a sign-in redirect?
+        const { result, error } = await redirectReady;
+        const saved = takeResumeState();
+        if (error) {
+            console.error('Sign-in redirect failed:', error);
+            ssDel(REDIRECT_MARK);
+            showToast('Sign-in didn\u2019t finish. Please try again.', 6000);
+            if (APP_MODE === 'capture' && saved && COMMITTEE_COPY[saved.committee]) chooseCommittee(saved.committee);
+        } else if (result && result.account) {
+            ssDel(REDIRECT_MARK);
+            if (APP_MODE === 'capture') {
+                if (!saved || !COMMITTEE_COPY[saved.committee]) {
+                    // Signed in, but we no longer know which committee this claim is for. Do not
+                    // guess (the choice decides who approves and pays): ask again. The cached
+                    // account means the next "Sign in" tap completes without another prompt.
+                    showToast('You\u2019re signed in. Please choose your committee to continue.', 6000);
+                    return;
+                }
+                chooseCommittee(saved.committee);
+            }
+            try {
+                await handleAuth(result.account);
+                await applyResume(saved);
+            } catch (err) { console.error(err); showToast('Sign-in failed. Please try again.'); }
+            return;
+        }
         if (APP_MODE === 'capture') return;
         const accounts = msalInstance.getAllAccounts();
         if (accounts.length > 0) {
@@ -2539,11 +2755,7 @@
 
         try {
             // Refresh token
-            const tokenResponse = await msalInstance.acquireTokenSilent({
-                scopes: loginRequest.scopes,
-                account: currentUser
-            });
-            accessToken = tokenResponse.accessToken;
+            await acquireToken();
 
             // Get SharePoint site ID
             const siteRes = await fetch(
@@ -2766,9 +2978,7 @@
         hint.textContent = 'Looking up last odometer reading…';
 
         try {
-            const tokenResponse = await msalInstance.acquireTokenSilent({
-                scopes: loginRequest.scopes, account: currentUser });
-            accessToken = tokenResponse.accessToken;
+            await acquireToken();
 
             const siteRes = await fetch(
                 `https://graph.microsoft.com/v1.0/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`,
@@ -2851,9 +3061,7 @@
         document.getElementById('churchList').innerHTML =
             '<div style="padding:12px; color:var(--text-light); font-size:14px;">Loading churches…</div>';
         try {
-            const tokenResponse = await msalInstance.acquireTokenSilent({
-                scopes: loginRequest.scopes, account: currentUser });
-            accessToken = tokenResponse.accessToken;
+            await acquireToken();
 
             const siteRes = await fetch(
                 `https://graph.microsoft.com/v1.0/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`,
@@ -2985,9 +3193,7 @@
         btn.innerHTML = '<span class="spinner"></span> Submitting…';
 
         try {
-            const tokenResponse = await msalInstance.acquireTokenSilent({
-                scopes: loginRequest.scopes, account: currentUser });
-            accessToken = tokenResponse.accessToken;
+            await acquireToken();
 
             const siteRes = await fetch(
                 `https://graph.microsoft.com/v1.0/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`,
@@ -3111,11 +3317,13 @@
         document.getElementById('districtForm').style.display = 'none';
     }
 
-    function showToast(msg) {
+    let toastTimer = null;
+    function showToast(msg, ms) {
         const toast = document.getElementById('toast');
         toast.textContent = msg;
         toast.style.display = 'block';
-        setTimeout(() => { toast.style.display = 'none'; }, 4000);
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { toast.style.display = 'none'; }, ms || 4000);
     }
 
     // ========== CONTACT LOGGING MODAL ==========
@@ -3146,8 +3354,7 @@
     // Small Graph helpers, used by the receipt flow (mirrors the inline
     // pattern the claim/district paths use).
     async function refreshAccessToken() {
-        const t = await msalInstance.acquireTokenSilent({ scopes: loginRequest.scopes, account: currentUser });
-        accessToken = t.accessToken;
+        await acquireToken();
     }
     async function graphSite() {
         const r = await fetch(

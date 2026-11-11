@@ -96,5 +96,24 @@ else if (!/integrity="sha384-[A-Za-z0-9+/=]+"/.test(msal[0]) || !/crossorigin="a
   console.warn("note: MSAL <script> has no integrity attribute (removed 2026-11-11 with the CSP; see above)");
 }
 
+// ---- Sign-in order and single token path (2026-11: redirect fallback) ----
+// handleRedirectPromise must run before the first MSAL call that reads state, and every token
+// acquisition goes through the one acquireToken() helper (silent -> pop-up -> redirect).
+{
+  const code = html.replace(/\/\/[^\n]*/g, "");
+  const first = (re) => { const m = re.exec(code); return m ? m.index : -1; };
+  const hrp = first(/\.handleRedirectPromise\(/);
+  if (hrp < 0) fail("handleRedirectPromise() is never called");
+  for (const re of [/\.getAllAccounts\(/, /\.acquireTokenSilent\(/, /\.acquireTokenPopup\(/, /\.loginPopup\(/, /\.loginRedirect\(/]) {
+    const at = first(re);
+    if (at >= 0 && at < hrp) fail(`${re} appears before handleRedirectPromise() - MSAL state must not be read before the redirect response is consumed`);
+  }
+  const count = (re) => (code.match(re) || []).length;
+  if (count(/\.acquireTokenSilent\(/g) !== 1) fail("acquireTokenSilent must be called in exactly one place (the acquireToken helper)");
+  if (count(/\.acquireTokenPopup\(/g) !== 1) fail("acquireTokenPopup must be called in exactly one place (the acquireToken helper)");
+  if (count(/\.acquireTokenRedirect\(/g) !== 1) fail("acquireTokenRedirect must be called in exactly one place");
+  if (!/<signin-logic>/.test(html) || !/<\/signin-logic>/.test(html)) fail("signin-logic markers missing (scripts/signin-logic.test.mjs extracts that block)");
+}
+
 if (failed) process.exit(1);
 console.log(`index.html OK (${checked} inline script(s) syntax-checked)`);

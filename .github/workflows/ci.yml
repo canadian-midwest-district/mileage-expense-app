@@ -17,4 +17,6 @@ jobs:
           node-version: 24
       # index.html parses and its inline script has no syntax error.
       - run: node scripts/check-index.mjs
+      # Pure sign-in decision logic (pop-up vs redirect, redirect URI).
+      - run: node --test scripts/signin-logic.test.mjs
       # Future tests go here (e.g. node --test "test/*.mjs") once the repo has any.
