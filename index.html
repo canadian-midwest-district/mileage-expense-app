@@ -5458,14 +5458,16 @@
                  oid:String(c.oid||a.localAccountId||'').trim() };
     }
 
-    // An instant, shown on Regina's clock (no DST, so always CST). Stored
+    // An instant, shown on Regina's clock (UTC-6 all year). Labelled "SK time",
+    // never CST or Central: Manitoba is on permanent daylight time, one hour
+    // ahead all year, so those words no longer name one clock. Stored
     // values stay real UTC instants; only the display is local.
     function fmtRegina(iso, dateOnly){
         if(!iso) return '';
         const d=new Date(iso); if(isNaN(d)) return String(iso);
         const o={timeZone:'America/Regina', year:'numeric', month:'2-digit', day:'2-digit'};
         if(!dateOnly) Object.assign(o,{hour:'2-digit', minute:'2-digit', hourCycle:'h23'});
-        return d.toLocaleString('en-CA',o).replace(',','')+(dateOnly?'':' CST');
+        return d.toLocaleString('en-CA',o).replace(',','')+(dateOnly?'':' SK time');
     }
 
     const cents=x=>Math.round((parseFloat(x)||0)*100);
